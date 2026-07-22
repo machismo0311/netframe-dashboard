@@ -1,0 +1,8 @@
+# never commit secrets or runtime cruft
+*.env
+.env
+__pycache__/
+*.pyc
+*.log
+*.bak
+*.swp

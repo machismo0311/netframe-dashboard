@@ -1,0 +1,676 @@
+<!-- NetFRAME Operations Center — Phase 1 visual shell (mock data).
+     Data model reconciled 2026-07-22 against live cluster.
+     Every panel reads from the global DATA object; Phase 2 swaps each
+     object's source from mock -> fetch('/api/...'). Render layer unchanged. -->
+<style>
+  :root{
+    --base:#040d14; --panel:#0a1922; --panel2:#08141c; --ink:#cdeef2;
+    --dim:#5f8a93; --line:rgba(0,255,240,.16); --line2:rgba(0,255,240,.32);
+    --cyan:#00fff0; --green:#00ff9f; --yellow:#fcee0a; --red:#ff2a6d;
+    --violet:#7b2fff; --orange:#ff7b00;
+    --font-display:'Rajdhani','Oswald','Bahnschrift SemiCondensed','Segoe UI Semibold',sans-serif;
+    --font-mono:'Share Tech Mono','JetBrains Mono','DejaVu Sans Mono','Consolas',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#000;height:100%;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center;font-family:var(--font-display)}
+
+  /* fixed pixel-locked stage, auto-scaled to viewport */
+  #stage{
+    position:relative;width:1920px;height:1080px;flex:0 0 auto;
+    transform-origin:top left;background:
+      radial-gradient(1200px 700px at 70% -10%, rgba(0,255,240,.06), transparent 60%),
+      radial-gradient(900px 600px at 10% 110%, rgba(123,47,255,.07), transparent 60%),
+      var(--base);
+    color:var(--ink);padding:16px 20px 28px;overflow:hidden;
+    display:grid;grid-template-rows:66px 92px 46px 1fr;row-gap:13px;
+  }
+  /* CRT scanlines + vignette + scan beam */
+  #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:60;
+    background:repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px);
+    mix-blend-mode:multiply;opacity:.5}
+  #stage::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:61;
+    box-shadow:inset 0 0 220px rgba(0,0,0,.7)}
+  #beam{position:absolute;left:0;right:0;height:140px;top:-140px;z-index:62;pointer-events:none;
+    background:linear-gradient(to bottom, transparent, rgba(0,255,240,.05) 60%, rgba(0,255,240,.10));
+    border-bottom:1px solid rgba(0,255,240,.22);animation:sweep 7s linear infinite}
+  @keyframes sweep{0%{top:-140px}100%{top:1080px}}
+  @media (prefers-reduced-motion:reduce){#beam{display:none}.dot{animation:none!important}}
+
+  /* ---- panel chrome ---- */
+  .panel{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);padding:10px 12px;
+    clip-path:polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+    display:flex;flex-direction:column;min-height:0}
+  .panel > .ph{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex:0 0 auto}
+  .ph .t{font-family:var(--font-mono);font-size:12px;letter-spacing:.18em;color:var(--cyan);
+    text-transform:uppercase;text-shadow:0 0 10px rgba(0,255,240,.35)}
+  .ph .sub{font-family:var(--font-mono);font-size:10px;color:var(--dim);letter-spacing:.1em;margin-left:auto}
+  .ph .glyph{width:9px;height:9px;background:var(--cyan);box-shadow:0 0 8px var(--cyan);
+    clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+  .corner{position:absolute;width:10px;height:10px;border-color:var(--line2);opacity:.8}
+  .corner.tl{top:3px;left:3px;border-top:2px solid;border-left:2px solid}
+  .corner.br{bottom:3px;right:3px;border-bottom:2px solid;border-right:2px solid}
+
+  /* ---- header ---- */
+  #head{display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .logo{display:flex;align-items:center;gap:12px}
+  .hex{width:42px;height:46px;display:grid;place-items:center;position:relative}
+  .hex svg{filter:drop-shadow(0 0 8px rgba(0,255,240,.6))}
+  .brand{line-height:1}
+  .brand .n{font-size:34px;font-weight:700;letter-spacing:.14em;color:#eafcff;
+    text-shadow:0 0 18px rgba(0,255,240,.45)}
+  .brand .n b{color:var(--cyan)}
+  .brand .s{font-family:var(--font-mono);font-size:11px;letter-spacing:.4em;color:var(--dim);margin-top:3px}
+  .hbadges{display:flex;gap:10px;margin-left:8px}
+  .badge{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;padding:5px 10px;
+    border:1px solid var(--line2);text-transform:uppercase;display:flex;align-items:center;gap:7px}
+  .badge.warn{color:var(--yellow);border-color:rgba(252,238,10,.4)}
+  .badge.ok{color:var(--green);border-color:rgba(0,255,159,.4)}
+  .clock{margin-left:auto;text-align:right}
+  .clock .tm{font-family:var(--font-mono);font-size:30px;color:#eafcff;letter-spacing:.06em;
+    font-variant-numeric:tabular-nums;text-shadow:0 0 14px rgba(0,255,240,.4)}
+  .clock .dt{font-family:var(--font-mono);font-size:11px;color:var(--dim);letter-spacing:.22em}
+
+  /* ---- summary strip ---- */
+  #summary{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+  .kpi{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;justify-content:center;
+    clip-path:polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))}
+  .kpi .lab{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
+  .kpi .val{font-size:38px;font-weight:700;line-height:1.05;color:#eafcff;font-variant-numeric:tabular-nums;
+    display:flex;align-items:baseline;gap:6px}
+  .kpi .val .u{font-size:14px;color:var(--dim);font-weight:400;font-family:var(--font-mono)}
+  .kpi .val .sep{color:var(--dim);font-weight:400}
+  .kpi .foot{font-family:var(--font-mono);font-size:10px;color:var(--dim);margin-top:2px;letter-spacing:.08em}
+  .kpi .edge{position:absolute;left:0;top:8px;bottom:8px;width:3px;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+
+  /* ---- monitor integrity ticker ---- */
+  #integrity{display:flex;gap:9px;align-items:stretch;min-height:0}
+  #integrity .lead{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;padding-right:4px}
+  #integrity .lead .t{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;color:var(--cyan);
+    text-transform:uppercase;text-shadow:0 0 10px rgba(0,255,240,.35)}
+  #integrity .lead .s2{font-family:var(--font-mono);font-size:8px;color:var(--dim);letter-spacing:.1em}
+  .ichip{flex:1;min-width:0;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+    padding:5px 9px;display:flex;flex-direction:column;justify-content:center;gap:1px;position:relative;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}
+  .ichip .il{font-family:var(--font-mono);font-size:8px;letter-spacing:.11em;color:var(--dim);text-transform:uppercase;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ichip .iv{font-family:var(--font-mono);font-size:12px;display:flex;align-items:center;gap:5px;white-space:nowrap}
+  .ichip .iv .dot{width:6px;height:6px}
+
+  /* ---- main grid ---- */
+  #main{display:grid;grid-template-columns:1fr 384px;grid-template-rows:1fr auto auto auto;gap:13px;min-height:0}
+  #nodes{grid-column:1;grid-row:1;display:grid;grid-template-columns:repeat(8,1fr);gap:10px}
+  #rail{grid-column:2;grid-row:1 / span 4;display:grid;grid-template-rows:auto 1fr auto auto;gap:11px;min-height:0}
+  #slurm{grid-column:1;grid-row:2}
+  #gpustrip{grid-column:1;grid-row:3;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  #botband{grid-column:1;grid-row:4;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+
+  /* node card */
+  .node{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);padding:9px 9px 8px;display:flex;flex-direction:column;gap:6px;
+    clip-path:polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 0 100%)}
+  .node.standalone{border-style:dashed;border-color:rgba(123,47,255,.4);background:
+    linear-gradient(180deg,rgba(123,47,255,.06),var(--panel2))}
+  .node .nh{display:flex;align-items:center;gap:6px}
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+  .dot.g{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2.4s infinite}
+  .dot.y{background:var(--yellow);box-shadow:0 0 8px var(--yellow);animation:pulse 1.3s infinite}
+  .dot.r{background:var(--red);box-shadow:0 0 9px var(--red);animation:pulse .9s infinite}
+  .dot.v{background:var(--violet);box-shadow:0 0 8px var(--violet)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .node .hn{font-size:17px;font-weight:700;letter-spacing:.04em;color:#eafcff}
+  .node .hw{font-family:var(--font-mono);font-size:9px;color:var(--dim);letter-spacing:.04em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .role{font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;padding:2px 5px;align-self:flex-start;
+    border:1px solid var(--line2);color:var(--cyan);text-transform:uppercase}
+  .role.st{color:var(--violet);border-color:rgba(123,47,255,.5)}
+  .role.stor{color:var(--orange);border-color:rgba(255,123,0,.45)}
+  .bar{--c:var(--cyan)}
+  .bar .bl{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:9px;
+    color:var(--dim);letter-spacing:.05em;margin-bottom:2px}
+  .bar .bl b{color:var(--ink);font-weight:400}
+  .bar .track{height:6px;background:rgba(255,255,255,.06);position:relative;overflow:hidden}
+  .bar .fill{height:100%;background:var(--c);box-shadow:0 0 8px var(--c);transition:width .8s ease}
+  .node .vm{font-family:var(--font-mono);font-size:9px;color:var(--dim);letter-spacing:.06em;margin-top:auto}
+  .node .vm b{color:var(--ink)}
+  .gpublk{border-top:1px solid var(--line);margin-top:4px;padding-top:5px}
+  .gpublk .gl{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:9px;color:var(--cyan);letter-spacing:.04em}
+  .temps{display:flex;gap:6px;margin-top:3px;flex-wrap:wrap}
+  .temp{font-family:var(--font-mono);font-size:10px;color:var(--ink);display:flex;align-items:center;gap:3px}
+  .temp i{width:5px;height:5px;background:var(--orange);box-shadow:0 0 6px var(--orange);border-radius:50%;font-style:normal}
+
+  /* small stat rows */
+  .rows{display:flex;flex-direction:column;gap:6px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:12px}
+  .row .nm{color:var(--ink);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.03em}
+  .row .hostt{color:var(--dim);font-size:10px}
+  .row .st{font-size:10px;letter-spacing:.08em}
+  .metric{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;
+    padding:3px 0;border-bottom:1px dashed rgba(0,255,240,.08)}
+  .metric .k{color:var(--dim);letter-spacing:.06em}
+  .metric .v{color:#eafcff;font-variant-numeric:tabular-nums}
+  .big{font-size:30px;font-weight:700;color:#eafcff;font-variant-numeric:tabular-nums;line-height:1}
+  .mono{font-family:var(--font-mono)}
+  .c-cyan{color:var(--cyan)}.c-green{color:var(--green)}.c-yellow{color:var(--yellow)}
+  .c-red{color:var(--red)}.c-violet{color:var(--violet)}.c-orange{color:var(--orange)}.c-dim{color:var(--dim)}
+
+  /* ups pair / rail rows of 2 */
+  .rail2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+
+  /* gauge (battery/load) */
+  .gauge{display:flex;align-items:center;gap:10px}
+  .ring{--p:0;--c:var(--green);width:52px;height:52px;border-radius:50%;flex:0 0 auto;
+    background:conic-gradient(var(--c) calc(var(--p)*1%), rgba(255,255,255,.07) 0);
+    display:grid;place-items:center;position:relative;filter:drop-shadow(0 0 6px rgba(0,255,240,.25))}
+  .ring::before{content:"";position:absolute;inset:6px;border-radius:50%;background:var(--panel2)}
+  .ring span{position:relative;font-family:var(--font-mono);font-size:12px;color:#eafcff;font-variant-numeric:tabular-nums}
+
+  /* sparkline */
+  .spark{display:flex;align-items:flex-end;gap:2px;height:26px}
+  .spark i{flex:1;background:linear-gradient(to top,rgba(0,255,240,.25),var(--cyan));font-style:normal;min-height:2px;
+    box-shadow:0 0 4px rgba(0,255,240,.4)}
+  .wan{display:flex;flex-direction:column;gap:3px}
+  .wan .wtop{display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:11px}
+
+  /* slurm band */
+  #slurm .body{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;min-height:0}
+  .qhead{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;color:var(--dim);
+    text-transform:uppercase;border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:5px;
+    display:flex;justify-content:space-between}
+  .job{display:grid;grid-template-columns:52px 1fr 74px 60px;gap:8px;font-family:var(--font-mono);font-size:12px;
+    padding:4px 0;align-items:center;border-bottom:1px dashed rgba(0,255,240,.07)}
+  .job .id{color:var(--dim)}
+  .job .usr{font-weight:700;display:flex;align-items:center;gap:6px}
+  .job .g{color:var(--cyan)}
+  .job .el,.job .rs{color:var(--dim);text-align:right}
+  .utag{width:7px;height:7px;border-radius:50%}
+  .users{display:flex;gap:14px;flex-wrap:wrap;margin-top:2px}
+  .uchip{font-family:var(--font-mono);font-size:11px;display:flex;align-items:center;gap:6px;color:var(--ink)}
+
+  #footer{position:absolute;left:20px;right:20px;bottom:7px;display:flex;justify-content:space-between;
+    font-family:var(--font-mono);font-size:10px;color:var(--dim);letter-spacing:.14em;z-index:40}
+
+  .plist{display:flex;flex-direction:column;gap:3px}
+  .kv2{display:grid;grid-template-columns:1fr auto;font-family:var(--font-mono);font-size:11px;padding:2px 0}
+  .kv2 .k{color:var(--dim);letter-spacing:.05em}
+  .kv2 .v{color:#eafcff;font-variant-numeric:tabular-nums}
+  .segbar{display:flex;height:8px;gap:2px;margin-top:3px}
+  .segbar i{flex:1;background:rgba(255,255,255,.06);font-style:normal}
+  .segbar i.on{background:var(--green);box-shadow:0 0 6px var(--green)}
+  .segbar i.on.c{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+  .pill{font-family:var(--font-mono);font-size:9px;padding:1px 6px;border:1px solid var(--line2);letter-spacing:.08em}
+  .offline{display:grid;place-items:center;gap:6px;flex:1;font-family:var(--font-mono);color:var(--dim);
+    letter-spacing:.14em;font-size:12px;text-align:center;border:1px dashed rgba(255,255,255,.08);padding:10px}
+  .offline .big2{color:var(--yellow);font-size:14px;letter-spacing:.2em}
+  .dead{color:var(--red)!important;border-color:rgba(255,42,109,.4)!important}
+</style>
+
+<div id="stage">
+  <div id="beam"></div>
+
+  <!-- HEADER -->
+  <div id="head">
+    <div class="logo">
+      <div class="hex"><svg width="40" height="44" viewBox="0 0 40 44"><polygon points="20,2 38,12 38,32 20,42 2,32 2,12" fill="none" stroke="#00fff0" stroke-width="2"/><polygon points="20,12 29,17 29,27 20,32 11,27 11,17" fill="#00fff0" fill-opacity="0.15" stroke="#00fff0" stroke-width="1.5"/></svg></div>
+      <div class="brand">
+        <div class="n">NET<b>FRAME</b></div>
+        <div class="s">KM-CLUSTER · OPERATIONS CENTER</div>
+      </div>
+    </div>
+    <div class="hbadges">
+      <div class="badge warn" id="modebadge"><span class="dot y"></span>MOCK · PHASE-1</div>
+      <div class="badge ok" id="hstatus"><span class="dot g"></span>ALL SYSTEMS NOMINAL</div>
+    </div>
+    <div class="clock">
+      <div class="tm" id="clk">--:--:--</div>
+      <div class="dt" id="cdate">----</div>
+    </div>
+  </div>
+
+  <!-- SUMMARY -->
+  <div id="summary"></div>
+
+  <!-- MONITOR INTEGRITY -->
+  <div id="integrity"></div>
+
+  <!-- MAIN -->
+  <div id="main">
+    <div id="nodes"></div>
+    <div id="rail"></div>
+    <div id="slurm" class="panel">
+      <div class="ph"><span class="glyph"></span><span class="t">SLURM Scheduler</span><span class="sub" id="slurmsub"></span></div>
+      <div class="users" id="slurmusers"></div>
+      <div class="body" style="margin-top:8px">
+        <div style="display:flex;flex-direction:column;min-height:0">
+          <div class="qhead"><span>Running</span><span id="runcount"></span></div>
+          <div id="running"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;min-height:0">
+          <div class="qhead"><span>Pending Queue</span><span id="pendcount"></span></div>
+          <div id="pending"></div>
+        </div>
+      </div>
+    </div>
+    <div id="gpustrip"></div>
+    <div id="botband"></div>
+  </div>
+
+  <div id="footer">
+    <span id="floc">VERMILION, OH · NETFRAME CS9000 42U · 7-NODE PROXMOX VE 9.2.3</span>
+    <span id="fhw">RTX 8000 48GB · 2× RTX 6000 48GB · 96GB VRAM · 1168GB RAM · 224 THREADS</span>
+  </div>
+</div>
+
+<script>
+/* ============================================================================
+   DATA MODEL — one object per panel. Phase 2: replace mock values with
+   fetch('/api/<source>') on a poll interval; render functions stay identical.
+   ============================================================================ */
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const jit=(v,d,lo,hi)=>Math.max(lo,Math.min(hi,v+rnd(-d,d)));
+const spark=()=>Array.from({length:16},()=>rnd(10,100));
+
+const DATA={
+  // --- 7 cluster nodes + pve1 standalone ---
+  nodes:[
+    {host:'QuarkyLab',hw:'R730 · 2×E5-2699v4',role:'ML / SLURM',rc:'st',ram:512,ramU:41,cpu:22,disk:34,vms:1,st:'g',
+     gpu:{name:'RTX 8000 48GB',vram:46,vramU:12,util:8,temps:[33]}},
+    {host:'Jarvis',hw:'R730 · 2×E5-2687Wv4',role:'LLM · Ollama',rc:'',ram:384,ramU:24,cpu:14,disk:22,vms:0,st:'g',
+     gpu:{name:'2× RTX 6000',vram:48,vramU:31,util:0,temps:[41,36]}},
+    {host:'Randy',hw:'Supermicro · PBS',role:'STORAGE',rc:'stor',ram:128,ramU:17,cpu:9,disk:58,vms:0,st:'g',gpu:null},
+    {host:'pve2',hw:'EliteDesk G4 · i7-8700',role:'OPNSENSE',rc:'',ram:32,ramU:22,cpu:31,disk:41,vms:1,st:'g',gpu:null},
+    {host:'pve3',hw:'EliteDesk G4 · i7-8700',role:'CORE / RKE2',rc:'',ram:48,ramU:19,cpu:18,disk:37,vms:5,st:'g',gpu:null},
+    {host:'pve4',hw:'EliteDesk G3m · i5-7500T',role:'RKE2 CP',rc:'',ram:32,ramU:26,cpu:22,disk:44,vms:2,st:'g',gpu:null},
+    {host:'pve5',hw:'EliteDesk G3m · i5-7500T',role:'RKE2 CP',rc:'',ram:32,ramU:28,cpu:16,disk:39,vms:4,st:'g',gpu:null},
+    {host:'pve1',hw:'Mac Mini · standalone',role:'PI-HOLE',rc:'',ram:16,ramU:34,cpu:12,disk:29,vms:1,st:'v',standalone:true,gpu:null},
+  ],
+  integrity:[
+    {k:'Backup Verify',v:'OK · 6h',s:'g'},
+    {k:'Hardening Drift',v:'NONE',s:'g'},
+    {k:'Exposure Guard',v:'401 ENFORCED',s:'g'},
+    {k:'Journal Errors',v:'0',s:'g'},
+    {k:'Auth Failures',v:'0',s:'g'},
+    {k:'LLM Router',v:'CONFORMANT',s:'g'},
+    {k:'NPM DNS',v:'0 MISSING',s:'g'},
+    {k:'Net Dead-man',v:'FLOW OK',s:'g'},
+    {k:'Capacity',v:'180d → 90%',s:'g'},
+    {k:'SMART Trend',v:'STABLE',s:'g'},
+  ],
+  ups:[
+    {name:'Middle Atlantic',model:'UPS-OL2200R',va:2200,load:38,batt:100,runtime:41,feeds:'R730s · Randy · DS4246'},
+    {name:'Tripp Lite',model:'SMART1500VA',va:1500,load:29,batt:100,runtime:52,feeds:'EX3400 · UniFi · compute'},
+  ],
+  services:[
+    {n:'Proxmox Backup',h:'Randy:8007',s:'g'},{n:'OPNsense',h:'VM100·pve2',s:'g'},
+    {n:'Pi-hole (pri)',h:'pve1·.177',s:'g'},{n:'Pi-hole (sec)',h:'pve5·.178',s:'g'},
+    {n:'Grafana',h:'CT103·pve4',s:'g'},{n:'Wazuh SIEM',h:'VM104·.184',s:'g'},
+    {n:'Headscale',h:'pve5·.186',s:'g'},{n:'Vaultwarden',h:'CT102·pve3',s:'g'},
+    {n:'Ollama · Qwen72B',h:'Jarvis·GPU',s:'g'},{n:'Open WebUI',h:'CT107·.185',s:'g'},
+    {n:'Jellyfin',h:'Randy:8096',s:'g'},{n:'Home Assistant',h:'VM110·pve5',s:'y'},
+  ],
+  pihole:{blocked:18.4,qpm:242,total:1284309,upstreams:2},
+  opnsense:{
+    wan1:{name:'WAN1 · Spectrum',state:'UP',role:'PRIMARY',down:spark(),up:spark(),lat:8.4},
+    wan2:{name:'WAN2 · FirstNet 5G',state:'STANDBY',role:'FAILOVER',down:spark(),up:spark(),lat:44.2},
+    states:8421,gw:'gwgroup OK',
+  },
+  k8s:{name:'RKE2',nodes:4,ready:4,pods:63,cp:'.54:6443',cni:'Cilium',lb:'MetalLB .71-75',gpuop:'DEFERRED'},
+  env:null, // sensor not wired
+  slurm:{
+    partitions:'student* (2h) · research (∞)', node:'QuarkyLab',
+    users:[{u:'kyle',c:'cyan'},{u:'fernanda',c:'violet'}],
+    running:[
+      {id:'1042',u:'fernanda',c:'violet',name:'dune-rag-train',gpu:'rtx8000:1',el:'2:14:07'},
+      {id:'1043',u:'kyle',c:'cyan',name:'qwen-eval',gpu:'—',el:'0:41:22'},
+      {id:'1044',u:'fernanda',c:'violet',name:'vecstore-embed',gpu:'rtx8000:1',el:'0:12:55'},
+    ],
+    pending:[
+      {id:'1045',u:'researcher02',name:'hadd-sim',rs:'Resources',wait:'0:03:11'},
+      {id:'1046',u:'student07',name:'nb-gpu-lab',rs:'Priority',wait:'0:07:48'},
+    ],
+  },
+  gpus:[
+    {host:'QuarkyLab',card:'Quadro RTX 8000',vram:46080,vramU:11800,util:8,watts:64,temps:[33]},
+    {host:'Jarvis',card:'2× Quadro RTX 6000',vram:49152,vramU:31700,util:0,watts:103,temps:[41,36]},
+    {host:'R730xd (planned)',card:'RX 580 8GB',planned:true},
+  ],
+  storage:{
+    pools:[{n:'datastore',cap:23000,used:4300,h:'ONLINE'},{n:'bulk (DS4246)',cap:56000,used:12100,h:'ONLINE'}],
+    jbod:22, smart:{pass:52,warn:2,fail:0},
+  },
+  network:{
+    sw:'EX3400-48P', up:41, ports:48, tenG:3, vlans:7,
+    links:[{n:'Randy xe-0/2/0',s:'10G'},{n:'QuarkyLab xe-0/2/1',s:'10G'},{n:'Jarvis xe-0/2/2',s:'10G'}],
+  },
+  power:{
+    feeds:[{n:'Middle Atlantic',w:752},{n:'Tripp Lite',w:392}],
+    gpuW:167, apc:'MGMT CARD FAILED',
+  },
+};
+
+/* ---------------- render helpers ---------------- */
+const el=id=>document.getElementById(id);
+const barColor=p=>p>=90?'var(--red)':p>=75?'var(--yellow)':'var(--cyan)';
+function bar(label,val,unit,pct,color){
+  return `<div class="bar" style="--c:${color||barColor(pct)}">
+    <div class="bl"><span>${label}</span><b>${val}${unit||''}</b></div>
+    <div class="track"><div class="fill" style="width:${Math.min(100,pct)}%"></div></div></div>`;
+}
+
+/* ---------------- nodes ---------------- */
+function renderNodes(){
+  el('nodes').innerHTML=DATA.nodes.map(n=>{
+    const cpu=Math.round(n.cpu), ramPct=Math.round(n.ramU);
+    const ramGB=(n.ram*n.ramU/100);
+    let gpu='';
+    if(n.gpu){
+      gpu=`<div class="gpublk">
+        <div class="gl"><span>${n.gpu.name}</span><span>${n.gpu.util}%</span></div>
+        ${bar('VRAM', (n.gpu.vramU)+'/'+n.gpu.vram+'G', '', n.gpu.vramU/n.gpu.vram*100,'var(--cyan)')}
+        <div class="temps">${n.gpu.temps.map((t,i)=>`<span class="temp"><i></i>GPU${n.gpu.temps.length>1?i:''} ${Math.round(t)}°</span>`).join('')}</div>
+      </div>`;
+    }
+    return `<div class="node ${n.standalone?'standalone':''}">
+      <div class="nh"><span class="dot ${n.st}"></span><span class="hn">${n.host}</span></div>
+      <div class="hw">${n.hw}</div>
+      <span class="role ${n.rc}">${n.role}</span>
+      ${bar('CPU', cpu+'%', '', cpu)}
+      ${bar('RAM', ramGB.toFixed(0)+'G', '', ramPct)}
+      ${bar('DISK', Math.round(n.disk)+'%', '', n.disk)}
+      ${gpu}
+      <div class="vm">${n.standalone?'STANDALONE · not in cluster':'VMs/CT · <b>'+n.vms+'</b>'}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------------- summary ---------------- */
+function renderSummary(){
+  const online=DATA.nodes.filter(n=>!n.standalone).length;
+  const vms=DATA.nodes.reduce((a,n)=>a+(n.standalone?0:n.vms),0)+8;
+  const ramTot=DATA.nodes.filter(n=>!n.standalone).reduce((a,n)=>a+n.ram,0);
+  const ramUsed=DATA.nodes.filter(n=>!n.standalone).reduce((a,n)=>a+n.ram*n.ramU/100,0);
+  const vramTot=96, vramUsed=(DATA.gpus.filter(g=>!g.planned).reduce((a,g)=>a+g.vramU,0)/1024);
+  const run=DATA.slurm.running.length, pend=DATA.slurm.pending.length;
+  const kW=(DATA.power.feeds.reduce((a,f)=>a+f.w,0))/1000;
+  const cards=[
+    ['NODES ONLINE',`${online}<span class="sep">/</span>7`,'','cluster quorate'],
+    ['ACTIVE VMS / CT',vms,'','6 VM · '+(vms-6)+' LXC'],
+    ['CLUSTER RAM',`${(ramUsed/1024).toFixed(2)}`,'/ '+(ramTot/1024).toFixed(1)+' TB',Math.round(ramUsed/ramTot*100)+'% committed'],
+    ['GPU VRAM',`${vramUsed.toFixed(0)}`,'/ 96 GB',Math.round(vramUsed/vramTot*100)+'% · 3 cards'],
+    ['SLURM JOBS',`${run}<span class="sep">/</span>${pend}`,'','running / queued'],
+    ['TOTAL POWER',`${kW.toFixed(2)}`,'kW',DATA.power.feeds.reduce((a,f)=>a+f.w,0)+' W drawn'],
+  ];
+  el('summary').innerHTML=cards.map(c=>`<div class="kpi"><div class="edge"></div>
+    <div class="lab">${c[0]}</div>
+    <div class="val">${c[1]}${c[2]?'<span class="u">'+c[2]+'</span>':''}</div>
+    <div class="foot">${c[3]}</div></div>`).join('');
+}
+
+/* ---------------- rail (ups, services, pihole/opnsense, k8s/env) ---------------- */
+function upsPanel(u){
+  const watts=Math.round(u.load/100*u.va*0.9);
+  return `<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">${u.name}</span><span class="sub">${u.model}</span></div>
+    <div class="gauge">
+      <div class="ring" style="--p:${u.batt};--c:${u.batt>50?'var(--green)':'var(--yellow)'}"><span>${Math.round(u.batt)}%</span></div>
+      <div style="flex:1">
+        ${bar('LOAD', Math.round(u.load)+'%', '', u.load, u.load>80?'var(--red)':'var(--cyan)')}
+        <div class="metric"><span class="k">DERIVED</span><span class="v c-cyan">${watts} W</span></div>
+        <div class="metric" style="border:none"><span class="k">RUNTIME</span><span class="v">${Math.round(u.runtime)} min</span></div>
+      </div>
+    </div>
+    <div class="mono" style="font-size:9px;color:var(--dim);letter-spacing:.06em;margin-top:4px">FEEDS: ${u.feeds}</div>
+  </div>`;
+}
+function renderRail(){
+  const svc=`<div class="panel" style="min-height:0">
+    <div class="ph"><span class="glyph"></span><span class="t">Services</span><span class="sub">${DATA.services.filter(s=>s.s==='g').length}/${DATA.services.length} UP</span></div>
+    <div class="rows" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 14px">
+      ${DATA.services.map(s=>`<div class="row"><span class="dot ${s.s}" style="width:7px;height:7px"></span><span class="nm">${s.n}</span><span class="hostt">${s.h}</span></div>`).join('')}
+    </div></div>`;
+
+  const p=DATA.pihole;
+  const pi=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">Pi-hole DNS</span><span class="sub">2 upstreams</span></div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <div><div class="big c-green">${p.blocked.toFixed(1)}%</div><div class="mono" style="font-size:9px;color:var(--dim)">BLOCKED</div></div>
+      <div style="flex:1">
+        <div class="metric"><span class="k">QUERIES/MIN</span><span class="v">${Math.round(p.qpm)}</span></div>
+        <div class="metric" style="border:none"><span class="k">TOTAL TODAY</span><span class="v">${p.total.toLocaleString()}</span></div>
+      </div>
+    </div></div>`;
+
+  const o=DATA.opnsense;
+  const wanRow=w=>`<div class="wan">
+     <div class="wtop"><span>${w.name}</span>
+       <span class="pill" style="color:${w.state==='UP'?'var(--green)':'var(--yellow)'};border-color:currentColor">${w.role}</span></div>
+     <div class="spark">${w.down.map(v=>`<i style="height:${v}%"></i>`).join('')}</div>
+     <div class="mono" style="font-size:9px;color:var(--dim);display:flex;justify-content:space-between;margin-top:2px">
+       <span>${w.state}</span><span>↓ ${(w.mbps||0).toFixed(1)} Mbps${w.lat!=null?' · '+w.lat.toFixed(0)+'ms':''}</span></div></div>`;
+  const opn=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">OPNsense · Dual-WAN</span><span class="sub">${o.states.toLocaleString()} states</span></div>
+    <div style="display:flex;flex-direction:column;gap:8px">${wanRow(o.wan1)}${wanRow(o.wan2)}</div>
+    <div class="mono" style="font-size:9px;color:var(--green);letter-spacing:.06em;margin-top:5px">▲ FAILOVER GROUP HEALTHY · WAN1 ACTIVE</div>
+  </div>`;
+
+  const k=DATA.k8s;
+  const k8s=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">RKE2 Kubernetes</span><span class="sub">${k.cp}</span></div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div><div class="big c-cyan">${k.ready}/${k.nodes}</div><div class="mono" style="font-size:9px;color:var(--dim)">NODES READY</div></div>
+      <div style="flex:1">
+        <div class="metric"><span class="k">PODS</span><span class="v">${k.pods}</span></div>
+        <div class="metric"><span class="k">CNI / LB</span><span class="v" style="font-size:10px">${k.cni} · ${k.lb}</span></div>
+        <div class="metric" style="border:none"><span class="k">GPU OPERATOR</span><span class="v c-yellow" style="font-size:10px">${k.gpuop}</span></div>
+      </div></div></div>`;
+
+  const env=`<div class="panel" style="min-height:96px">
+    <div class="ph"><span class="glyph"></span><span class="t">Environment</span></div>
+    <div class="offline"><div class="big2">SENSOR OFFLINE</div><div>AWAITING GPIO · DHT22/BME280 TBD</div></div></div>`;
+
+  el('rail').innerHTML=`<div class="rail2">${upsPanel(DATA.ups[0])}${upsPanel(DATA.ups[1])}</div>
+    ${svc}
+    <div class="rail2" style="grid-template-rows:auto">${pi}${opn}</div>
+    <div class="rail2">${k8s}${env}</div>`;
+}
+
+/* ---------------- slurm ---------------- */
+function renderSlurm(){
+  const s=DATA.slurm;
+  el('slurmsub').textContent=s.partitions+' · '+s.node;
+  el('slurmusers').innerHTML=s.users.map(u=>`<span class="uchip"><span class="utag" style="background:var(--${u.c});box-shadow:0 0 6px var(--${u.c})"></span>${u.u}</span>`).join('')
+    +`<span class="uchip c-dim" style="margin-left:auto">researcher01-06 · student01-12</span>`;
+  el('runcount').textContent=s.running.length+' active';
+  el('pendcount').textContent=s.pending.length+' queued';
+  el('running').innerHTML=s.running.map(j=>`<div class="job">
+    <span class="id">#${j.id}</span>
+    <span class="usr" style="color:var(--${j.c})"><span class="utag" style="background:var(--${j.c})"></span>${j.name}</span>
+    <span class="g">${j.gpu}</span><span class="el">${j.el}</span></div>`).join('');
+  el('pending').innerHTML=s.pending.map(j=>`<div class="job" style="grid-template-columns:52px 1fr 90px">
+    <span class="id">#${j.id}</span>
+    <span class="usr c-dim" style="font-weight:400">${j.u} · ${j.name}</span>
+    <span class="rs">${j.rs}</span></div>`).join('');
+}
+
+/* ---------------- gpu strip ---------------- */
+function renderGpu(){
+  el('gpustrip').innerHTML=DATA.gpus.map(g=>{
+    if(g.planned) return `<div class="panel" style="opacity:.55;border-style:dashed">
+      <div class="ph"><span class="glyph" style="background:var(--orange);box-shadow:0 0 8px var(--orange)"></span><span class="t" style="color:var(--orange)">${g.host}</span></div>
+      <div class="offline" style="border-color:rgba(255,123,0,.25)"><div class="big2" style="color:var(--orange)">${g.card}</div><div>SEATED IN FUTURE R730xd · UNPOWERED</div></div></div>`;
+    const vp=g.vramU/g.vram*100;
+    return `<div class="panel">
+      <div class="ph"><span class="glyph"></span><span class="t">${g.host}</span><span class="sub">${g.card}</span></div>
+      <div style="display:flex;gap:14px;align-items:center">
+        <div class="temps" style="flex-direction:column;gap:4px">
+          ${g.temps.map((t,i)=>`<span class="temp" style="font-size:15px"><i></i>${g.temps.length>1?'GPU'+i+' ':''}${Math.round(t)}°C</span>`).join('')}
+          <span class="mono c-cyan" style="font-size:13px">${Math.round(g.watts)} W</span>
+        </div>
+        <div style="flex:1">
+          ${bar('VRAM',(g.vramU/1024).toFixed(1)+'/'+(g.vram/1024).toFixed(0)+' GB','',vp,'var(--cyan)')}
+          ${bar('UTIL',g.util+'%','',g.util,'var(--green)')}
+        </div>
+      </div></div>`;
+  }).join('');
+}
+
+/* ---------------- bottom band: storage / network / power ---------------- */
+function renderBottom(){
+  const st=DATA.storage, nt=DATA.network, pw=DATA.power;
+  const storage=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">Storage · PBS</span><span class="sub">Randy ZFS</span></div>
+    ${st.pools.map(p=>bar(p.n,(p.used/1000).toFixed(1)+'/'+(p.cap/1000).toFixed(0)+' TB','',p.used/p.cap*100,'var(--cyan)')).join('')}
+    <div class="kv2" style="margin-top:5px"><span class="k">DS4246 JBOD DRIVES</span><span class="v">${st.jbod} × 4 TB SAS</span></div>
+    <div style="display:flex;gap:7px;margin-top:6px">
+      <span class="pill" style="color:var(--green);border-color:currentColor">SMART PASS ${st.smart.pass}</span>
+      <span class="pill" style="color:var(--yellow);border-color:currentColor">WARN ${st.smart.warn}</span>
+      <span class="pill" style="color:${st.smart.fail?'var(--red)':'var(--dim)'};border-color:currentColor">FAIL ${st.smart.fail}</span>
+    </div></div>`;
+
+  const network=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">Network Fabric</span><span class="sub">${nt.sw}</span></div>
+    <div class="kv2"><span class="k">PORTS ACTIVE</span><span class="v">${nt.up}/${nt.ports}</span></div>
+    <div class="segbar">${Array.from({length:nt.ports},(_,i)=>`<i class="${i<nt.up?'on':''} ${i<nt.tenG?'c':''}"></i>`).join('')}</div>
+    <div class="kv2" style="margin-top:4px"><span class="k">THROUGHPUT</span><span class="v">↓ ${(nt.inMbps||0).toFixed(0)} · ↑ ${(nt.outMbps||0).toFixed(0)} Mbps</span></div>
+    <div class="kv2"><span class="k">10G LINKS UP</span><span class="v c-cyan">${nt.tenG} × DAC</span></div>
+    <div style="margin-top:4px">${nt.links.map(l=>`<div class="kv2"><span class="k">${l.n}</span><span class="v c-cyan">${l.s}</span></div>`).join('')}</div>
+    <div class="kv2" style="margin-top:3px"><span class="k">VLANS</span><span class="v">${nt.vlans} active · 1·20·30·40·50·60·70</span></div>
+  </div>`;
+
+  const gpuW=Math.round(DATA.gpus.filter(g=>!g.planned).reduce((a,g)=>a+g.watts,0));
+  const totalW=pw.feeds.reduce((a,f)=>a+f.w,0);
+  const power=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">Power</span><span class="sub">2 UPS · 1 PDU</span></div>
+    <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:3px"><div class="big c-cyan">${(totalW/1000).toFixed(2)}</div><span class="mono c-dim" style="font-size:11px">kW total draw</span></div>
+    ${pw.feeds.map(f=>`<div class="kv2"><span class="k">${f.n}</span><span class="v">${f.w} W</span></div>`).join('')}
+    <div class="kv2"><span class="k">GPU SUBTOTAL</span><span class="v c-orange">${gpuW} W</span></div>
+    <div class="kv2" style="border-top:1px dashed rgba(255,42,109,.25);margin-top:3px;padding-top:4px">
+      <span class="k">APC AP7901 PDU</span><span class="v c-red">${pw.apc}</span></div>
+  </div>`;
+
+  el('botband').innerHTML=storage+network+power;
+}
+
+/* ---------------- monitor integrity ticker ---------------- */
+function renderIntegrity(){
+  const cmap={g:'green',y:'yellow',r:'red'};
+  const warn=DATA.integrity.filter(c=>c.s!=='g').length;
+  el('integrity').innerHTML=
+    `<div class="lead"><span class="t">Monitor</span><span class="s2">INTEGRITY · ${warn?warn+' WARN':'ALL OK'}</span></div>`
+    + DATA.integrity.map(c=>`<div class="ichip">
+        <div class="il">${c.k}</div>
+        <div class="iv"><span class="dot ${c.s}"></span><span class="c-${cmap[c.s]}">${c.v}</span></div>
+      </div>`).join('');
+}
+
+/* ---------------- clock ---------------- */
+function renderClock(){
+  const d=new Date();
+  el('clk').textContent=d.toLocaleTimeString('en-GB');
+  el('cdate').textContent=d.toLocaleDateString('en-US',{weekday:'short',year:'numeric',month:'short',day:'2-digit'}).toUpperCase();
+}
+
+/* ---------------- mock tick (fallback when no live /api/state) ---------------- */
+function mockTick(){
+  DATA.nodes.forEach(n=>{n.cpu=jit(n.cpu,6,3,95);n.ramU=jit(n.ramU,2,10,92);n.disk=jit(n.disk,0.8,8,90);
+    if(n.gpu){n.gpu.util=Math.round(jit(n.gpu.util,7,0,99));n.gpu.temps=n.gpu.temps.map(t=>jit(t,1.5,30,74));n.gpu.vramU=jit(n.gpu.vramU,1,4,n.gpu.vram)}});
+  DATA.ups.forEach(u=>{u.load=jit(u.load,3,15,70);u.runtime=jit(u.runtime,2,20,60)});
+  DATA.pihole.qpm=jit(DATA.pihole.qpm,30,120,420);DATA.pihole.blocked=jit(DATA.pihole.blocked,.6,14,26);DATA.pihole.total+=Math.round(rnd(40,260));
+  DATA.opnsense.wan1.down=spark();DATA.opnsense.wan1.up=spark();DATA.opnsense.wan1.lat=jit(DATA.opnsense.wan1.lat,1.5,4,20);
+  DATA.opnsense.wan2.down=spark();DATA.opnsense.wan2.lat=jit(DATA.opnsense.wan2.lat,4,30,80);
+  DATA.opnsense.states=Math.round(jit(DATA.opnsense.states,180,7000,9500));
+  DATA.gpus.forEach(g=>{if(g.planned)return;g.util=Math.round(jit(g.util,8,0,99));g.watts=jit(g.watts,10,50,260);g.temps=g.temps.map(t=>jit(t,1.5,30,74));g.vramU=jit(g.vramU,300,3000,g.vram)});
+  DATA.k8s.pods=Math.round(jit(DATA.k8s.pods,1,58,70));
+  // integrity: journal-error count flickers 0..2 to show the WARN path works
+  const je=Math.round(rnd(0,2.3));DATA.integrity[3].v=String(je);DATA.integrity[3].s=je>=2?'y':'g';
+  DATA.power.feeds[0].w=Math.round(jit(DATA.power.feeds[0].w,40,600,1000));
+  DATA.power.feeds[1].w=Math.round(jit(DATA.power.feeds[1].w,25,300,520));
+  renderAll();
+}
+function renderAll(){renderSummary();renderNodes();renderIntegrity();renderRail();renderSlurm();renderGpu();renderBottom();}
+
+/* ---------------- auto-scale stage to viewport ---------------- */
+// SAFE < 1 leaves a small border so nothing is clipped by monitor/HDMI overscan.
+// If your monitor shows a black edge, set its OSD scaling to "1:1"/"Full" and raise this toward 1.
+const SAFE = 0.96;
+function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080)*SAFE;
+  const st=el('stage');st.style.transform=`scale(${s})`;
+  document.body.style.width=innerWidth+'px';
+  st.style.marginLeft=((innerWidth-1920*s)/2)+'px';st.style.marginTop=((innerHeight-1080*s)/2)+'px';}
+addEventListener('resize',fit);
+
+/* ---------------- live data: poll /api/state, fall back to mock ---------------- */
+function updateMode(live,age){
+  const b=el('modebadge'); if(!b) return;
+  if(live){
+    const stale = age!=null && age>25;   // snapshot stopped advancing -> a source died
+    b.className = stale ? 'badge warn' : 'badge ok';
+    b.innerHTML = stale
+      ? '<span class="dot y"></span>LIVE · STALE '+Math.round(age)+'s'
+      : '<span class="dot g"></span>LIVE · PHASE-2';
+  } else {
+    b.className='badge warn'; b.innerHTML='<span class="dot y"></span>MOCK · OFFLINE';
+  }
+}
+function mergeGpus(cur,live){
+  return cur.map(g=>{ if(g.planned) return g;
+    const L=live.find(x=>x.host===g.host); if(!L) return g;
+    return {...g,card:L.card,temps:L.temps,util:L.util,vramU:L.vramU,vram:L.vram,
+            watts:(L.watts!=null?L.watts:g.watts)}; });
+}
+function applyLive(s){
+  if(s.nodes){DATA.nodes.forEach(n=>{const L=s.nodes[n.host]; if(!L) return;
+    if(L.cpu!=null)n.cpu=L.cpu; if(L.ramU!=null)n.ramU=L.ramU; if(L.disk!=null)n.disk=L.disk;
+    if(L.st)n.st=L.st; if(L.gpu&&n.gpu)Object.assign(n.gpu,L.gpu);});}
+  if(s.ups){DATA.ups.forEach(u=>{const k=u.name.indexOf('Middle')>=0?'midatlantic':'tripplite';
+    const L=s.ups[k]; if(!L) return;
+    if(L.load!=null)u.load=L.load; if(L.batt!=null)u.batt=L.batt; if(L.runtime!=null)u.runtime=L.runtime;});}
+  if(s.integrity)DATA.integrity=s.integrity;
+  if(s.services)DATA.services=s.services;
+  if(s.gpus)DATA.gpus=mergeGpus(DATA.gpus,s.gpus);
+  if(s.slurm){const L=s.slurm;
+    if(L.running)DATA.slurm.running=L.running;
+    if(L.pending)DATA.slurm.pending=L.pending;
+    if(L.partitions)DATA.slurm.partitions=L.partitions;
+    if(L.node)DATA.slurm.node=L.node;}
+  if(s.k8s)Object.assign(DATA.k8s,s.k8s);
+  if(s.pihole){const p=s.pihole; // reflect DNS up/down onto the Pi-hole service dots
+    DATA.services.forEach(sv=>{ if(sv.n==='Pi-hole (pri)'&&p.primary!=null)sv.s=p.primary?'g':'r';
+      if(sv.n==='Pi-hole (sec)'&&p.secondary!=null)sv.s=p.secondary?'g':'r';});}
+  if(s.pihole_stats){const p=s.pihole_stats;
+    if(p.blocked!=null)DATA.pihole.blocked=p.blocked;
+    if(p.total!=null)DATA.pihole.total=p.total;
+    if(p.qpm!=null)DATA.pihole.qpm=p.qpm;}
+  if(s.opnsense){const o=s.opnsense;
+    ['wan1','wan2'].forEach(k=>{const L=o[k],w=DATA.opnsense[k]; if(!L||!w)return;
+      if(L.state)w.state=L.state;
+      if(L.down_bps!=null){WANHIST[k].push(L.down_bps);while(WANHIST[k].length>16)WANHIST[k].shift();
+        const m=Math.max(1,...WANHIST[k]); w.down=WANHIST[k].map(v=>v/m*100); w.mbps=L.down_bps/1e6;}
+      if(L.up_bps!=null)w.upMbps=L.up_bps/1e6;
+      if(L.lat!=null)w.lat=L.lat;});
+    if(o.states!=null)DATA.opnsense.states=o.states;}
+  if(s.network){const n=s.network,d=DATA.network;
+    if(n.up!=null)d.up=n.up; if(n.ports!=null)d.ports=n.ports; if(n.tenG!=null)d.tenG=n.tenG;
+    if(n.in_mbps!=null)d.inMbps=n.in_mbps; if(n.out_mbps!=null)d.outMbps=n.out_mbps;}
+}
+const WANHIST={wan1:[],wan2:[]};
+async function pull(){
+  try{
+    const r=await fetch('/api/state',{cache:'no-store'});
+    if(!r.ok) throw 0;
+    const s=await r.json();
+    if(!s||!s.ok) throw 0;
+    const age = s.ts ? (Date.now()/1000 - s.ts) : null;
+    applyLive(s); updateMode(true, age); renderAll();
+  }catch(e){
+    updateMode(false); mockTick();   // mockTick() re-renders
+  }
+}
+
+/* boot */
+renderAll();renderClock();fit();
+setInterval(renderClock,1000);
+pull(); setInterval(pull,3000);
+</script>
