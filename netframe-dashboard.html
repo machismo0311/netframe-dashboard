@@ -41,7 +41,7 @@
   .panel{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
     border:1px solid var(--line);padding:10px 12px;
     clip-path:polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
-    display:flex;flex-direction:column;min-height:0}
+    display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
   .panel > .ph{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex:0 0 auto}
   .ph .t{font-family:var(--font-mono);font-size:12px;letter-spacing:.18em;color:var(--cyan);
     text-transform:uppercase;text-shadow:0 0 10px rgba(0,255,240,.35)}
@@ -145,7 +145,7 @@
   .rows{display:flex;flex-direction:column;gap:6px;overflow:hidden}
   .row{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:12px}
   .row .nm{color:var(--ink);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.03em}
-  .row .hostt{color:var(--dim);font-size:10px}
+  .row .hostt{color:var(--dim);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:96px;flex:0 0 auto}
   .row .st{font-size:10px;letter-spacing:.08em}
   .metric{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;
     padding:3px 0;border-bottom:1px dashed rgba(0,255,240,.08)}
@@ -427,7 +427,7 @@ function upsPanel(u){
 function renderRail(){
   const svc=`<div class="panel" style="min-height:0">
     <div class="ph"><span class="glyph"></span><span class="t">Services</span><span class="sub">${DATA.services.filter(s=>s.s==='g').length}/${DATA.services.length} UP</span></div>
-    <div class="rows" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 14px">
+    <div class="rows" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2px 14px">
       ${DATA.services.map(s=>`<div class="row"><span class="dot ${s.s}" style="width:7px;height:7px"></span><span class="nm">${s.n}</span><span class="hostt">${s.h}</span></div>`).join('')}
     </div></div>`;
 
