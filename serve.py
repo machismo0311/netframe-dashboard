@@ -257,6 +257,8 @@ def k8s():
                 for c in n.get("status", {}).get("conditions", [])
                 if c.get("type") == "Ready" and c.get("status") == "True")
     out = {"nodes": len(nodes), "ready": ready}
+    gpus = sum(int(n.get("status", {}).get("allocatable", {}).get("nvidia.com/gpu", 0) or 0) for n in nodes)
+    out["gpuop"] = ("ACTIVE · %d GPU" % gpus) if gpus else "DEFERRED"
     if pods is not None:
         out["pods"] = sum(1 for p in pods if p.get("status", {}).get("phase") == "Running")
         out["podsTotal"] = len(pods)

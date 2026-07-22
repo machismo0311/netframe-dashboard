@@ -73,7 +73,7 @@
   .clock .dt{font-family:var(--font-mono);font-size:11px;color:var(--dim);letter-spacing:.22em}
 
   /* ---- summary strip ---- */
-  #summary{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+  #summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px}
   .kpi{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
     border:1px solid var(--line);padding:10px 14px;display:flex;flex-direction:column;justify-content:center;
     clip-path:polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))}
@@ -100,12 +100,12 @@
   .ichip .iv .dot{width:6px;height:6px}
 
   /* ---- main grid ---- */
-  #main{display:grid;grid-template-columns:1fr 384px;grid-template-rows:1fr auto auto auto;gap:13px;min-height:0}
-  #nodes{grid-column:1;grid-row:1;display:grid;grid-template-columns:repeat(8,1fr);gap:10px}
+  #main{display:grid;grid-template-columns:minmax(0,1fr) 384px;grid-template-rows:1fr auto auto auto;gap:13px;min-height:0}
+  #nodes{grid-column:1;grid-row:1;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px}
   #rail{grid-column:2;grid-row:1 / span 4;display:grid;grid-template-rows:auto 1fr auto auto;gap:11px;min-height:0}
   #slurm{grid-column:1;grid-row:2}
-  #gpustrip{grid-column:1;grid-row:3;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-  #botband{grid-column:1;grid-row:4;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  #gpustrip{grid-column:1;grid-row:3;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  #botband{grid-column:1;grid-row:4;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 
   /* node card */
   .node{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
@@ -157,7 +157,7 @@
   .c-red{color:var(--red)}.c-violet{color:var(--violet)}.c-orange{color:var(--orange)}.c-dim{color:var(--dim)}
 
   /* ups pair / rail rows of 2 */
-  .rail2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .rail2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
 
   /* gauge (battery/load) */
   .gauge{display:flex;align-items:center;gap:10px}
@@ -175,7 +175,7 @@
   .wan .wtop{display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:11px}
 
   /* slurm band */
-  #slurm .body{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;min-height:0}
+  #slurm .body{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;min-height:0}
   .qhead{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;color:var(--dim);
     text-transform:uppercase;border-bottom:1px solid var(--line);padding-bottom:4px;margin-bottom:5px;
     display:flex;justify-content:space-between}
@@ -594,7 +594,7 @@ function renderAll(){renderSummary();renderNodes();renderIntegrity();renderRail(
 /* ---------------- auto-scale stage to viewport ---------------- */
 // SAFE < 1 leaves a small border so nothing is clipped by monitor/HDMI overscan.
 // If your monitor shows a black edge, set its OSD scaling to "1:1"/"Full" and raise this toward 1.
-const SAFE = 0.96;
+const SAFE = 1;
 function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080)*SAFE;
   const st=el('stage');st.style.transform=`scale(${s})`;
   document.body.style.width=innerWidth+'px';
