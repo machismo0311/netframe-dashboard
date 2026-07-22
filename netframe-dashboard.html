@@ -433,14 +433,14 @@ function renderRail(){
 
   const p=DATA.pihole;
   const pi=`<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">Pi-hole DNS</span><span class="sub">2 upstreams</span></div>
-    <div style="display:flex;align-items:center;gap:14px">
-      <div><div class="big c-green">${p.blocked.toFixed(1)}%</div><div class="mono" style="font-size:9px;color:var(--dim)">BLOCKED</div></div>
-      <div style="flex:1">
-        <div class="metric"><span class="k">QUERIES/MIN</span><span class="v">${Math.round(p.qpm)}</span></div>
-        <div class="metric" style="border:none"><span class="k">TOTAL TODAY</span><span class="v">${p.total.toLocaleString()}</span></div>
-      </div>
-    </div></div>`;
+    <div class="ph"><span class="glyph"></span><span class="t">Pi-hole DNS</span><span class="sub">2 up</span></div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px">
+      <div class="big c-green">${p.blocked.toFixed(1)}%</div>
+      <div class="mono" style="font-size:9px;color:var(--dim)">BLOCKED</div>
+    </div>
+    <div class="metric"><span class="k">QUERIES/MIN</span><span class="v">${Math.round(p.qpm)}</span></div>
+    <div class="metric" style="border:none"><span class="k">TOTAL TODAY</span><span class="v">${p.total.toLocaleString()}</span></div>
+  </div>`;
 
   const o=DATA.opnsense;
   const wanRow=w=>`<div class="wan">
