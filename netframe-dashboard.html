@@ -228,7 +228,7 @@
       </div>
     </div>
     <div class="hbadges">
-      <div class="badge warn" id="modebadge"><span class="dot y"></span>MOCK · PHASE-1</div>
+      <div class="badge warn" id="modebadge"><span class="dot y"></span>CONNECTING</div>
       <div class="badge ok" id="hstatus"><span class="dot g"></span>ALL SYSTEMS NOMINAL</div>
     </div>
     <div class="clock">
@@ -659,9 +659,9 @@ function updateMode(live,age){
     b.className = stale ? 'badge warn' : 'badge ok';
     b.innerHTML = stale
       ? '<span class="dot y"></span>LIVE · STALE '+Math.round(age)+'s'
-      : '<span class="dot g"></span>LIVE · PHASE-2';
+      : '<span class="dot g"></span>LIVE';
   } else {
-    b.className='badge warn'; b.innerHTML='<span class="dot y"></span>MOCK · OFFLINE';
+    b.className='badge warn'; b.innerHTML='<span class="dot y"></span>OFFLINE';
   }
 }
 function mergeGpus(cur,live){
