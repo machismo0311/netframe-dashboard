@@ -466,16 +466,27 @@ function renderRail(){
   </div>`;
 
   const o=DATA.opnsense;
-  const wanRow=w=>`<div class="wan">
+  const wanRow=w=>{
+    const online=w.gw?w.gw==='Online':(w.state==='UP');
+    const c=online?'var(--green)':'var(--red)';
+    const detail=online
+      ? `${w.lat!=null?w.lat.toFixed(0)+' ms':'—'}${w.loss?' · '+w.loss+'%':''} · ↓${(w.mbps||0).toFixed(1)}M`
+      : 'NO PATH';
+    return `<div class="wan">
      <div class="wtop"><span>${w.name}</span>
-       <span class="pill" style="color:${w.state==='UP'?'var(--green)':'var(--yellow)'};border-color:currentColor">${w.role}</span></div>
+       <span class="pill" style="color:${c};border-color:currentColor">${w.role}</span></div>
      <div class="spark">${w.down.map(v=>`<i style="height:${v}%"></i>`).join('')}</div>
      <div class="mono" style="font-size:9px;color:var(--dim);display:flex;justify-content:space-between;margin-top:2px">
-       <span>${w.state}</span><span>↓ ${(w.mbps||0).toFixed(1)} Mbps${w.lat!=null?' · '+w.lat.toFixed(0)+'ms':''}</span></div></div>`;
+       <span style="color:${c}">${w.gw||w.state}</span><span>${detail}</span></div></div>`;
+  };
+  const w1on=o.wan1.gw?o.wan1.gw==='Online':(o.wan1.state==='UP');
+  const active=w1on?'WAN1':(o.wan2.gw==='Online'?'WAN2':'NONE');
+  const fc=w1on?'var(--green)':'var(--red)';
+  const fmsg=w1on?`▲ PRIMARY UP · ${active} ACTIVE`:`▼ PRIMARY DOWN · ${active} ACTIVE`;
   const opn=`<div class="panel">
     <div class="ph"><span class="glyph"></span><span class="t">OPNsense · Dual-WAN</span><span class="sub">${o.states.toLocaleString()} states</span></div>
     <div style="display:flex;flex-direction:column;gap:8px">${wanRow(o.wan1)}${wanRow(o.wan2)}</div>
-    <div class="mono" style="font-size:9px;color:var(--green);letter-spacing:.06em;margin-top:5px">▲ FAILOVER GROUP HEALTHY · WAN1 ACTIVE</div>
+    <div class="mono" style="font-size:9px;color:${fc};letter-spacing:.06em;margin-top:5px">${fmsg}</div>
   </div>`;
 
   const k=DATA.k8s;
@@ -688,7 +699,7 @@ function applyLive(s){
       if(L.down_bps!=null){WANHIST[k].push(L.down_bps);while(WANHIST[k].length>16)WANHIST[k].shift();
         const m=Math.max(1,...WANHIST[k]); w.down=WANHIST[k].map(v=>v/m*100); w.mbps=L.down_bps/1e6;}
       if(L.up_bps!=null)w.upMbps=L.up_bps/1e6;
-      if(L.lat!=null)w.lat=L.lat;});
+      if(L.gw!==undefined){w.gw=L.gw;w.lat=L.lat;w.loss=L.loss;}});
     if(o.states!=null)DATA.opnsense.states=o.states;}
   if(s.network){const n=s.network,d=DATA.network;
     if(n.up!=null)d.up=n.up; if(n.ports!=null)d.ports=n.ports; if(n.tenG!=null)d.tenG=n.tenG;

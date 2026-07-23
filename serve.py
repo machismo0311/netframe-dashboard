@@ -384,12 +384,17 @@ def opnsense_stats():
         out["states"] = int(G("diagnostics/firewall/pf_states").get("current", 0))
     except Exception:
         pass
-    try:   # optional — needs the "Status: Gateways" privilege; 403 is fine
+    try:   # needs the "Status: Gateways" privilege; offline gateways return "~" fields
+        def numish(s):
+            try: return round(float(str(s).replace("ms", "").replace("%", "").strip()), 1)
+            except Exception: return None
         for g in G("routes/gateway/status").get("items", []):
             wk = "wan2" if "2" in (g.get("name") or "") else "wan1"
-            if wk in out:
-                out[wk]["lat"] = round(float(str(g.get("delay", "0")).replace("ms", "").strip() or 0), 1)
-                out[wk]["gw_status"] = g.get("status")
+            if wk not in out:
+                continue
+            out[wk]["gw"] = g.get("status_translated") or g.get("status")   # Online / Offline
+            out[wk]["lat"] = numish(g.get("delay"))
+            out[wk]["loss"] = numish(g.get("loss"))
     except Exception:
         pass
     return out or None
