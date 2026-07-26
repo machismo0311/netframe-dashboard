@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE   = os.path.dirname(os.path.abspath(__file__))
 HTML   = os.path.join(HERE, "netframe-dashboard.html")
 PORT   = int(sys.argv[1]) if len(sys.argv) > 1 else 8088
-REFRESH = 5.0
+REFRESH = 30.0
 SSH    = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
           # multiplex: all concurrent queries to a host reuse ONE connection
           # (otherwise 16 parallel ssh can exceed sshd MaxStartups and silently drop)
