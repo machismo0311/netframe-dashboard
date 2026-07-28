@@ -6,3 +6,5 @@ __pycache__/
 *.log
 *.bak
 *.swp
+serve.py.bak*
+__pycache__/

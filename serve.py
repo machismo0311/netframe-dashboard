@@ -139,17 +139,18 @@ def integrity(M):
         return None
     nodes = M["nodes"]
     # aggregate journal signals across every host that ran the check
-    err = sum(_m(M, n, "journal_errors").get("error_lines", 0) for n in nodes if "journal_errors" in nodes[n])
-    authf = sum(_m(M, n, "journal_errors").get("auth_failures", 0) for n in nodes if "journal_errors" in nodes[n])
+    # INV-020: dict.get(key, default) does NOT protect against a null VALUE - guard every coercion
+    err = sum((_m(M, n, "journal_errors").get("error_lines") or 0) for n in nodes if "journal_errors" in nodes[n])
+    authf = sum((_m(M, n, "journal_errors").get("auth_failures") or 0) for n in nodes if "journal_errors" in nodes[n])
     jv = "WARN" if any(_v(M, n, "journal_errors") == "WARN" for n in nodes if "journal_errors" in nodes[n]) else "OK"
     # SMART: worst pending sectors + any failed
-    pend = max([_m(M, n, "smart").get("worst_pending_sectors", 0) for n in nodes if "smart" in nodes[n]] or [0])
+    pend = max([(_m(M, n, "smart").get("worst_pending_sectors") or 0) for n in nodes if "smart" in nodes[n]] or [0])
     failed = any(_m(M, n, "smart").get("failed") for n in nodes if "smart" in nodes[n])
     sv = "r" if failed else ("y" if pend else "g")
     bk = _chk(M, "randy", "backup_verify"); bm = bk.get("metrics", {})
     hd = _chk(M, "randy", "hardening_drift"); hm = hd.get("metrics", {})
     npm = _m(M, "pve3", "npm_dns")
-    flow = _m(M, "monitoring", "net_syslog_flow").get("count", 0)
+    flow = _m(M, "monitoring", "net_syslog_flow").get("count") or 0   # INV-020: null count -> 0, never int(None)
     pa = _v(M, "monitoring", "page_auth"); ca = _v(M, "monitoring", "console_auth")
     exposure = "g" if pa == "OK" and ca == "OK" else "y"
     return [
@@ -399,13 +400,53 @@ def opnsense_stats():
         pass
     return out or None
 
-def build_state():
-    st = {"ts": time.time(), "mode": "LIVE", "sources": {}}
+class _NoData(Exception):
+    """Raised by a section that ran cleanly but has no data this cycle (MISSING/STALE, not ERROR)."""
+
+def build_state(prev=None):
+    """Assemble ONE snapshot. Read-only. P1 per-source isolation: the timestamp is stamped up front
+    and the snapshot is ALWAYS returned, so the wall can NEVER freeze while claiming LIVE. Each source
+    is assembled in its own boundary - one source failing degrades only its own panel. A programmer/
+    parse error surfaces LOUDLY as ERROR (never silently shown as stale). Global mode is DERIVED from
+    panel freshness, never hardcoded. Per-panel state/age/provenance lives in st['panels']; the legacy
+    st['sources'] booleans are preserved for the existing HTML contract."""
+    now = time.time()
+    prev = prev or {}
+    st = {"ts": now, "sources": {}, "panels": {}, "nodes": {}}
+
+    def mark(name, ok, state, age=None, error=None):
+        st["sources"][name] = bool(ok)                       # backward-compatible boolean (HTML contract)
+        st["panels"][name] = {"state": state, "age": age, "error": error, "src": name, "observed_at": round(now)}
+
+    def carry(name, keys, reason, error=False):
+        got = False
+        for k in keys:
+            pv = prev.get(k)
+            if pv not in (None, {}, []):
+                st[k] = pv; got = True
+        age = round(now - prev.get("ts", now)) if got else None
+        mark(name, got, ("ERROR" if error else ("STALE" if got else "MISSING")), age, reason)
+
+    def section(name, keys, assemble, has_data):
+        """Isolated assembly: FRESH on data; STALE (carry last-good) or MISSING when absent;
+        ERROR (loud) when the assembly raises. Never fatal - the snapshot always completes."""
+        try:
+            assemble()
+            if has_data():
+                mark(name, True, "FRESH", 0, None)
+            else:
+                carry(name, keys, "no data this cycle")
+        except _NoData:
+            carry(name, keys, "no data this cycle")
+        except Exception as e:
+            print("[netframe] PANEL ERROR %s: %s" % (name, e), flush=True)
+            carry(name, keys, str(e), error=True)
 
     # prime one SSH master per host so the parallel pool multiplexes over a single
     # socket each (cheap once warm; ControlPersist keeps them alive between refreshes)
     for host in ("pve4", "jarvis", "quarkylab"):
-        sh(SSH + [host, "true"], timeout=10)
+        try: sh(SSH + [host, "true"], timeout=10)
+        except Exception: pass
 
     # fire every independent source concurrently — turns ~15s of serial SSH into ~5s
     tasks = {
@@ -439,93 +480,109 @@ def build_state():
                 R[k] = None
 
     # ---- nodes (Prometheus) ----
-    cpu, ramU, disk, up = R["cpu"] or {}, R["ramU"] or {}, R["disk"] or {}, R["up"] or {}
-    st["sources"]["prometheus"] = bool(up)
-    nodes = {}
-    for inst, card in HOSTS.items():
-        n = {}
-        if inst in cpu:  n["cpu"] = round(cpu[inst], 1)
-        if inst in ramU: n["ramU"] = round(ramU[inst], 1)
-        if inst in disk: n["disk"] = round(disk[inst], 1)
-        if inst in up:   n["st"] = "g" if up[inst] >= 1 else "r"
-        if n:
-            nodes[card] = n
-    st["nodes"] = nodes
+    def _nodes():
+        cpu, ramU, disk, up = R["cpu"] or {}, R["ramU"] or {}, R["disk"] or {}, R["up"] or {}
+        if not up:
+            raise _NoData()
+        nodes = {}
+        for inst, card in HOSTS.items():
+            n = {}
+            if inst in cpu:  n["cpu"] = round(cpu[inst], 1)
+            if inst in ramU: n["ramU"] = round(ramU[inst], 1)
+            if inst in disk: n["disk"] = round(disk[inst], 1)
+            if inst in up:   n["st"] = "g" if up[inst] >= 1 else "r"
+            if n:
+                nodes[card] = n
+        st["nodes"] = nodes
+    section("prometheus", ["nodes"], _nodes, lambda: bool(st.get("nodes")))
 
     # ---- UPS (peanut-ups): load %, battery %, runtime sec -> min ----
-    load, batt, rt = R["load"] or {}, R["batt"] or {}, R["rt"] or {}
-    ups = {}
-    for key in ("midatlantic", "tripplite"):
-        u = {}
-        if key in load: u["load"] = round(load[key], 1)
-        if key in batt: u["batt"] = round(batt[key], 1)
-        if key in rt:   u["runtime"] = round(rt[key] / 60.0)
-        if u:
-            ups[key] = u
-    if ups:
-        st["ups"] = ups
+    def _ups():
+        load, batt, rt = R["load"] or {}, R["batt"] or {}, R["rt"] or {}
+        ups = {}
+        for key in ("midatlantic", "tripplite"):
+            u = {}
+            if key in load: u["load"] = round(load[key], 1)
+            if key in batt: u["batt"] = round(batt[key], 1)
+            if key in rt:   u["runtime"] = round(rt[key] / 60.0)
+            if u:
+                ups[key] = u
+        if ups:
+            st["ups"] = ups
+    section("ups", ["ups"], _ups, lambda: bool(st.get("ups")))
 
-    ph = R["ph"] or {}
-    if ph:
-        st["pihole"] = {k: int(v) for k, v in ph.items()}
+    # ---- Pi-hole up/down (Prometheus) ----
+    def _ph():
+        ph = R["ph"] or {}
+        if ph:
+            st["pihole"] = {k: int(v) for k, v in ph.items()}
+    section("pihole", ["pihole"], _ph, lambda: bool(st.get("pihole")))
 
-    # ---- monitor last_run.json ----
-    M = R["M"] or {}
-    st["sources"]["monitor"] = bool(M.get("nodes"))
-    ig, sv = integrity(M), services(M)
-    # GPU: prefer the live exporter (fresh + real watts); fall back to the monitor's nvidia-smi
-    gm = assemble_gpus(R.get("g_temp"), R.get("g_util"), R.get("g_mu"), R.get("g_mt"), R.get("g_pw"))
-    if gm:
-        st["sources"]["gpu"] = True
+    # ---- monitor last_run.json (integrity, services, GPU) ----
+    def _monitor():
+        M = R["M"] or {}
+        if not M.get("nodes"):
+            raise _NoData()
+        ig, svv = integrity(M), services(M)
+        gm = assemble_gpus(R.get("g_temp"), R.get("g_util"), R.get("g_mu"), R.get("g_mt"), R.get("g_pw"))
+        st["_gpu_live"] = bool(gm)
+        if not gm:
+            gm = gpus_from_monitor(M)
+        if ig: st["integrity"] = ig
+        if svv: st["services"] = svv
+        if gm:
+            st["gpus"] = gm
+            for g in gm:
+                st["nodes"].setdefault(g["host"], {})["gpu"] = {
+                    "temps": g["temps"], "util": g["util"],
+                    "vramU": round(g["vramU"] / 1024, 1), "vram": round(g["vram"] / 1024)}
+    section("monitor", ["integrity", "services", "gpus"], _monitor, lambda: bool(st.get("integrity")))
+    # GPU panel provenance: FRESH only when the live exporter fed it
+    _gl = st.pop("_gpu_live", False)
+    mark("gpu", bool(_gl), "FRESH" if _gl else ("STALE" if st.get("gpus") else "MISSING"),
+         0 if _gl else None, None if _gl else "monitor nvidia-smi fallback")
+
+    # ---- SLURM / RKE2 / Pi-hole API / OPNsense / switch ----
+    section("slurm",      ["slurm"],        lambda: st.update({"slurm": R["slurm"]}) if R.get("slurm") else None,   lambda: bool(st.get("slurm")))
+    section("k8s",        ["k8s"],          lambda: st.update({"k8s": R["k8s"]}) if R.get("k8s") else None,         lambda: bool(st.get("k8s")))
+    section("pihole_api", ["pihole_stats"], lambda: st.update({"pihole_stats": R["phs"]}) if R.get("phs") else None, lambda: bool(st.get("pihole_stats")))
+    section("opnsense",   ["opnsense"],     lambda: st.update({"opnsense": R["opn"]}) if R.get("opn") else None,    lambda: bool(st.get("opnsense")))
+    section("switch",     ["network"],      lambda: st.update({"network": R["sw"]}) if R.get("sw") else None,       lambda: bool(st.get("network")))
+
+    # ---- derived global state (INV-001/002: never hardcode LIVE; mode reflects real freshness) ----
+    states = [p["state"] for p in st["panels"].values()]
+    st["ok"] = bool(st["sources"].get("prometheus") or st["sources"].get("monitor"))
+    if states and all(s == "FRESH" for s in states):
+        st["mode"] = "LIVE"
+    elif any(s == "FRESH" for s in states):
+        st["mode"] = "DEGRADED"
     else:
-        gm = gpus_from_monitor(M)
-    if ig:
-        st["integrity"] = ig
-    if sv:
-        st["services"] = sv
-    if gm:
-        st["gpus"] = gm
-        for g in gm:
-            nodes.setdefault(g["host"], {})["gpu"] = {
-                "temps": g["temps"], "util": g["util"],
-                "vramU": round(g["vramU"] / 1024, 1), "vram": round(g["vram"] / 1024)}
-
-    # ---- SLURM + RKE2 ----
-    if R["slurm"]:
-        st["slurm"] = R["slurm"]; st["sources"]["slurm"] = True
-    if R["k8s"]:
-        st["k8s"] = R["k8s"]; st["sources"]["k8s"] = True
-    if R.get("phs"):
-        st["pihole_stats"] = R["phs"]; st["sources"]["pihole_api"] = True
-    if R.get("opn"):
-        st["opnsense"] = R["opn"]; st["sources"]["opnsense"] = True
-    if R.get("sw"):
-        st["network"] = R["sw"]; st["sources"]["switch"] = True
-
-    st["ok"] = st["sources"].get("prometheus") or st["sources"].get("monitor")
+        st["mode"] = "STALE"
+    st["has_error"] = any(p["state"] == "ERROR" for p in st["panels"].values())
     return st
 
 # ---------------------------------------------------------------- background refresh
-STATE = {"ts": 0, "mode": "MOCK", "ok": False, "sources": {}}
+STATE = {"ts": 0, "mode": "MOCK", "ok": False, "sources": {}, "panels": {}}
 LOCK = threading.Lock()
 
 def refresher():
+    """P1: the snapshot is published UNCONDITIONALLY every cycle, so ts ALWAYS advances. Even a
+    framework-level failure publishes an error snapshot with a fresh ts - the wall can never freeze
+    while claiming LIVE."""
     global STATE
     while True:
+        t = time.time()
         try:
-            t = time.time()
-            s = build_state()
-            if s.get("ok"):
-                with LOCK:
-                    STATE = s
-                on = [k for k, v in s["sources"].items() if v]
-                print("[netframe] refreshed in %.1fs | up: %s" % (time.time() - t, ",".join(on)), flush=True)
-            else:
-                print("[netframe] refresh produced no usable data (all sources down?) — keeping last-good", flush=True)
-        except Exception as e:
             with LOCK:
-                STATE = {**STATE, "err": str(e)}
-            print("[netframe] refresh error: %s — keeping last-good" % e, flush=True)
+                prev = STATE
+            s = build_state(prev)
+        except Exception as e:
+            print("[netframe] BUILD ERROR: %s — publishing error snapshot (ts still advances)" % e, flush=True)
+            s = {**STATE, "ts": time.time(), "mode": "ERROR", "err": str(e), "has_error": True}
+        with LOCK:
+            STATE = s
+        on = [k for k, v in s.get("sources", {}).items() if v]
+        print("[netframe] refreshed in %.1fs | mode=%s | up: %s" % (time.time() - t, s.get("mode"), ",".join(on)), flush=True)
         time.sleep(REFRESH)
 
 # ---------------------------------------------------------------- http
