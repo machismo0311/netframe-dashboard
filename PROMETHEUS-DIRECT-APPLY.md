@@ -1,8 +1,8 @@
 # Apply block: make NetFRAME query Prometheus directly (kill the `pct exec` storm)
 
-**Goal:** dashboard clients query Prometheus over the LAN at `http://192.168.10.183:9090`
-instead of `ssh pve4 -> pct exec 103 -> curl localhost:9090`. Deletes the per-metric
-`lxc-attach` overhead that pushed pve4 to load ~20.
+**Goal:** dashboard clients query Prometheus over the LAN at `http://<REDACTED-IP>:9090`
+instead of `ssh <cluster-node-4> -> pct exec 103 -> curl localhost:9090`. Deletes the per-metric
+`lxc-attach` overhead that pushed <cluster-node-4> to load ~20.
 
 **Order matters:** do Part A (expose Prometheus) and verify it BEFORE Part B
 (repoint serve.py). If serve.py is repointed first, the dashboard goes blank until
@@ -12,27 +12,27 @@ Rollback for each part is at the bottom.
 
 ---
 
-## Part A — Expose Prometheus on the LAN (operator, on pve4)
+## Part A — Expose Prometheus on the LAN (operator, on <cluster-node-4>)
 
 Additive change: keeps the existing `127.0.0.1:9090` binding (so `nfm-prom` still
-works during transition) and adds a `192.168.10.183:9090` binding. Done in the
+works during transition) and adds a `<REDACTED-IP>:9090` binding. Done in the
 override file so the base compose stays untouched.
 
 ### A0. Read-only pre-check
 ```bash
-ssh root@192.168.10.202 'pct exec 103 -- ss -tlnp | grep 9090'
+ssh root@<REDACTED-IP> 'pct exec 103 -- ss -tlnp | grep 9090'
 # expect: LISTEN 127.0.0.1:9090  (only)
 ```
 
 ### A1. Add the prometheus override
 ```bash
-ssh root@192.168.10.202 'pct exec 103 -- bash -lc "
+ssh root@<REDACTED-IP> 'pct exec 103 -- bash -lc "
 cp /opt/grafana/docker-compose.override.yml /opt/grafana/docker-compose.override.yml.bak
 cat >> /opt/grafana/docker-compose.override.yml <<\"YAML\"
   prometheus:
     ports:
       - 127.0.0.1:9090:9090
-      - 192.168.10.183:9090:9090
+      - <REDACTED-IP>:9090:9090
 YAML
 echo --- new override ---; cat /opt/grafana/docker-compose.override.yml
 "'
@@ -43,16 +43,16 @@ echo --- new override ---; cat /opt/grafana/docker-compose.override.yml
 
 ### A2. Recreate just prometheus
 ```bash
-ssh root@192.168.10.202 'pct exec 103 -- bash -lc "cd /opt/grafana && docker compose up -d prometheus"'
+ssh root@<REDACTED-IP> 'pct exec 103 -- bash -lc "cd /opt/grafana && docker compose up -d prometheus"'
 ```
 
 ### A3. Verify (host + from Ares over the LAN)
 ```bash
-ssh root@192.168.10.202 'pct exec 103 -- ss -tlnp | grep 9090'
-# expect: BOTH 127.0.0.1:9090 and 192.168.10.183:9090
+ssh root@<REDACTED-IP> 'pct exec 103 -- ss -tlnp | grep 9090'
+# expect: BOTH 127.0.0.1:9090 and <REDACTED-IP>:9090
 
 # from Ares, straight over the network (no ssh/pct):
-curl -s 'http://192.168.10.183:9090/api/v1/query?query=up' | head -c 200; echo
+curl -s 'http://<REDACTED-IP>:9090/api/v1/query?query=up' | head -c 200; echo
 # expect: {"status":"success",...}
 ```
 If A3 succeeds, Part A is done and safe to leave even if you stop here — nothing
@@ -71,8 +71,8 @@ same return contract, so nothing else is touched. SSH is still used elsewhere
 Old:
 ```python
 def prom(query):
-    """Run one instant PromQL query via the pve4 nfm-prom wrapper (query on stdin)."""
-    out = sh(SSH + ["pve4", "nfm-prom"], input=query)
+    """Run one instant PromQL query via the <cluster-node-4> nfm-prom wrapper (query on stdin)."""
+    out = sh(SSH + ["<cluster-node-4>", "nfm-prom"], input=query)
     try:
         return json.loads(out)["data"]["result"]
     except Exception:
@@ -81,7 +81,7 @@ def prom(query):
 
 New:
 ```python
-PROM_URL = "http://192.168.10.183:9090"   # Prometheus in grafana CT103, LAN-exposed
+PROM_URL = "http://<REDACTED-IP>:9090"   # Prometheus in grafana CT103, LAN-exposed
 
 def prom(query):
     """Instant PromQL query straight to Prometheus over the LAN (no ssh/pct exec)."""
@@ -101,15 +101,15 @@ def prom(query):
 systemctl --user restart netframe-dashboard.service
 
 # Pi .133: copy the same serve.py and restart the system service
-scp ~/netframe-dashboard/serve.py machismo@192.168.10.133:/home/machismo/netframe-dashboard/serve.py
-ssh machismo@192.168.10.133 'sudo systemctl restart netframe-dashboard.service'
+scp ~/netframe-dashboard/serve.py machismo@<REDACTED-IP>:/home/machismo/netframe-dashboard/serve.py
+ssh machismo@<REDACTED-IP> 'sudo systemctl restart netframe-dashboard.service'
 ```
 
 ### B3. Verify
 ```bash
 curl -s http://localhost:8088/state | head -c 200; echo          # Ares dashboard populated
-ssh root@192.168.10.202 'ps -eo comm | grep -c "^pct$"'          # expect 0 (steady state)
-ssh root@192.168.10.202 uptime                                   # load should fall toward ~1-2
+ssh root@<REDACTED-IP> 'ps -eo comm | grep -c "^pct$"'          # expect 0 (steady state)
+ssh root@<REDACTED-IP> uptime                                   # load should fall toward ~1-2
 ```
 
 ### B4. (optional) restore fast refresh
@@ -123,12 +123,12 @@ display — edit `REFRESH` in serve.py on both hosts and restart. (Left at 30 fo
 - **Part A:** `pct exec 103 -- bash -lc "mv /opt/grafana/docker-compose.override.yml.bak /opt/grafana/docker-compose.override.yml && cd /opt/grafana && docker compose up -d prometheus"`
 
 ## Security note
-`192.168.10.183:9090` is Prometheus with **no auth**, reachable by anything on the
+`<REDACTED-IP>:9090` is Prometheus with **no auth**, reachable by anything on the
 Servers/LAN. Fine for a trusted homelab. To tighten, restrict TCP/9090 on
-192.168.10.183 to just Ares (.152) and the Pi (.133) via the host/OPNsense firewall.
+<REDACTED-IP> to just Ares (.152) and the Pi (.133) via the host/OPNsense firewall.
 
 ## Follow-ups (not required)
-- Once B is stable, the `nfm-prom` wrapper on pve4 and the `127.0.0.1:9090` line in
+- Once B is stable, the `nfm-prom` wrapper on <cluster-node-4> and the `127.0.0.1:9090` line in
   the override can be retired.
 - The Pi .133 runs a *duplicate* dashboard. If Ares:8088 is your only real display,
   consider `sudo systemctl disable --now netframe-dashboard` on the Pi instead of
