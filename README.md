@@ -1,17 +1,17 @@
-# NetFRAME — a self-hosted homelab wall dashboard
+# NetFRAME Dashboard
 
-A single-page, cyberpunk **operations dashboard** for a homelab cluster, driven by a
-tiny zero-dependency Python aggregator and shown full-screen on a Raspberry Pi kiosk.
+A **real-time operations wall display** for a 7-node Proxmox cluster, driven by a
+zero-dependency Python aggregator and shown full-screen on a kiosk.
 
-It pulls **live** data from everything you already run — Prometheus, your monitoring
-scripts, SLURM, Kubernetes, Pi-hole, your firewall, your switch — merges it into one
-snapshot, and paints a wall display that actually tells you when something is wrong.
+It merges live state from Prometheus, SLURM, Kubernetes, Pi-hole, the firewall and the
+switch into a single snapshot, and paints a display that tells an operator when something
+is wrong. **Read-only by design:** it observes production and cannot change it.
 
-![NetFRAME dashboard](docs/screenshot.png)
+![NetFRAME operations wall display](docs/screenshot.png)
 
-> **This is a build-it-yourself guide.** All infrastructure specifics (IPs, hostnames)
-> are placeholders like `HV1`, `192.168.X.X`, `GPU_HOST`. Search the doc for
-> `# CONFIGURE` markers — those are the only things you change for your own lab.
+> **This doubles as a build guide.** All infrastructure specifics (IPs, hostnames) are
+> placeholders like `HV1`, `192.168.X.X`, `GPU_HOST`. Search the doc for `# CONFIGURE`
+> markers — those are the only values that change for a different estate.
 
 ---
 
