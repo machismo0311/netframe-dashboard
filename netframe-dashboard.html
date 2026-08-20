@@ -652,17 +652,71 @@ function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080)*SAFE;
 addEventListener('resize',fit);
 
 /* ---------------- live data: poll /api/state, fall back to mock ---------------- */
-function updateMode(live,age){
-  const b=el('modebadge'); if(!b) return;
-  if(live){
-    const stale = age!=null && age>25;   // snapshot stopped advancing -> a source died
-    b.className = stale ? 'badge warn' : 'badge ok';
-    b.innerHTML = stale
-      ? '<span class="dot y"></span>LIVE · STALE '+Math.round(age)+'s'
-      : '<span class="dot g"></span>LIVE';
-  } else {
-    b.className='badge warn'; b.innerHTML='<span class="dot y"></span>OFFLINE';
+/* NFM-DISPLAY-STATE-BEGIN  (pure; offline-tested by tests/test_p2_renderer.mjs - keep in sync)
+   The wall must show the BACKEND's truth, not "did /api/state answer".
+   Historical defect: this returned LIVE whenever the fetch succeeded and the whole-snapshot ts was
+   young. serve.py publishes unconditionally, so ts is ALWAYS young - the badge therefore read LIVE
+   for a 12d13.7h CT103 outage while the tiles held carried data (operations/wall-monitor-dependency).
+   Authoritative fields, in precedence order:
+     1. s.ts            whole-snapshot freshness  -> STALE overrides everything stored
+     2. s.panels[].state per-panel FRESH/STALE/MISSING/ERROR (the only per-source truth)
+     3. s.mode           backend's own derived mode
+   s.sources[] is NOT authoritative: carry() sets it true whenever anything was carried.
+   Unknown or absent freshness fails toward DEGRADED/UNKNOWN, never toward LIVE. */
+function nfmDisplayState(s, nowSec, bound){
+  bound = (typeof bound==='number') ? bound : 90;   // ~2.4 refresh cycles (REFRESH=30s + work)
+  const R=(state,age,stale,reason)=>({state:state,age:age,stale:stale||[],reason:reason});
+  if(!s || typeof s!=='object')                 return R('OFFLINE', null, [], 'no snapshot');
+  const ts=(typeof s.ts==='number' && isFinite(s.ts) && s.ts>0) ? s.ts : null;
+  if(ts===null)                                 return R('STALE', null, [], 'snapshot has no timestamp');
+  const age=Math.max(0, nowSec-ts);
+  if(age>bound)                                 return R('STALE', age, [], 'snapshot age '+Math.round(age)+'s exceeds '+bound+'s');
+  const P=(s.panels && typeof s.panels==='object') ? s.panels : null;
+  if(!P)                                        return R('UNKNOWN', age, [], 'snapshot carries no per-panel state');
+  const names=Object.keys(P).sort(); const bad=[]; let unknown=false;
+  for(let i=0;i<names.length;i++){
+    const st=P[names[i]] && P[names[i]].state;
+    if(st==='FRESH') continue;
+    if(st==='STALE'||st==='MISSING'||st==='ERROR') bad.push(names[i]);
+    else unknown=true;                          // absent/unrecognised -> pessimistic
   }
+  if(!names.length)                             return R('UNKNOWN', age, [], 'no panels reported');
+  if(unknown)                                   return R('UNKNOWN', age, bad, 'a panel reported no recognised state');
+  if(s.mode==='STALE')                          return R('STALE', age, bad, 'backend mode STALE');
+  if(bad.length)                                return R('DEGRADED', age, bad, bad.length+' panel(s) not FRESH');
+  if(s.mode==='LIVE')                           return R('LIVE', age, [], 'backend LIVE and every panel FRESH');
+  if(s.mode==='DEGRADED'||s.mode==='ERROR')     return R('DEGRADED', age, bad, 'backend mode '+s.mode);
+  return R('UNKNOWN', age, bad, 'unrecognised backend mode '+String(s.mode));
+}
+/* NFM-DISPLAY-STATE-END */
+
+/* Ages a carried panel honestly: serve.py reports panels[].age from the last FRESH observation and
+   null when that is unknown. Null must read as UNKNOWN, never as young. */
+function nfmAgeText(sec){
+  if(sec==null || !isFinite(sec)) return '?';
+  if(sec<90) return Math.round(sec)+'s';
+  if(sec<5400) return Math.round(sec/60)+'m';
+  if(sec<172800) return Math.round(sec/3600)+'h';
+  return Math.round(sec/86400)+'d';
+}
+
+function updateMode(ds, s){
+  const b=el('modebadge'); if(!b) return;
+  const worst=(names)=>{ if(!s||!s.panels||!names.length) return null;
+    let w=null; for(const n of names){ const a=s.panels[n]?s.panels[n].age:null;
+      if(a==null) return null; if(w===null||a>w) w=a; } return w; };
+  if(ds.state==='LIVE'){ b.className='badge ok'; b.innerHTML='<span class="dot g"></span>LIVE'; return; }
+  if(ds.state==='DEGRADED'){
+    const w=worst(ds.stale);
+    b.className='badge warn';
+    b.innerHTML='<span class="dot y"></span>DEGRADED · '+ds.stale.join(' ').toUpperCase()+' '+nfmAgeText(w);
+    return; }
+  if(ds.state==='STALE'){
+    b.className='badge crit';
+    b.innerHTML='<span class="dot r"></span>STALE '+nfmAgeText(ds.age); return; }
+  if(ds.state==='OFFLINE'){
+    b.className='badge crit'; b.innerHTML='<span class="dot r"></span>OFFLINE'; return; }
+  b.className='badge warn'; b.innerHTML='<span class="dot y"></span>UNKNOWN';
 }
 function mergeGpus(cur,live){
   return cur.map(g=>{ if(g.planned) return g;
@@ -711,11 +765,13 @@ async function pull(){
     const r=await fetch('/api/state',{cache:'no-store'});
     if(!r.ok) throw 0;
     const s=await r.json();
-    if(!s||!s.ok) throw 0;
-    const age = s.ts ? (Date.now()/1000 - s.ts) : null;
-    applyLive(s); updateMode(true, age); renderAll();
+    if(!s) throw 0;
+    // s.ok is NOT a health signal: it is sources.prometheus||sources.monitor, and carry() holds
+    // those true on carried data. The snapshot is rendered and JUDGED on its own declared state.
+    const ds = nfmDisplayState(s, Date.now()/1000);
+    applyLive(s); updateMode(ds, s); renderAll();
   }catch(e){
-    updateMode(false); mockTick();   // mockTick() re-renders
+    updateMode({state:'OFFLINE',age:null,stale:[],reason:'fetch failed'}, null); mockTick();
   }
 }
 

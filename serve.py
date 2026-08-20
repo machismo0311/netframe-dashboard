@@ -414,9 +414,12 @@ def build_state(prev=None):
     prev = prev or {}
     st = {"ts": now, "sources": {}, "panels": {}, "nodes": {}}
 
-    def mark(name, ok, state, age=None, error=None):
+    prev_panels = prev.get("panels") or {}
+
+    def mark(name, ok, state, age=None, error=None, fresh_at=None):
         st["sources"][name] = bool(ok)                       # backward-compatible boolean (HTML contract)
-        st["panels"][name] = {"state": state, "age": age, "error": error, "src": name, "observed_at": round(now)}
+        st["panels"][name] = {"state": state, "age": age, "error": error, "src": name,
+                              "observed_at": round(now), "fresh_at": fresh_at}
 
     def carry(name, keys, reason, error=False):
         got = False
@@ -424,8 +427,14 @@ def build_state(prev=None):
             pv = prev.get(k)
             if pv not in (None, {}, []):
                 st[k] = pv; got = True
-        age = round(now - prev.get("ts", now)) if got else None
-        mark(name, got, ("ERROR" if error else ("STALE" if got else "MISSING")), age, reason)
+        # TD-147: age carried data from when it was LAST FRESH, not from the previous snapshot.
+        # prev is republished with a new ts every cycle, so aging against prev["ts"] re-aged
+        # carried data to one refresh interval forever - 12-day-old data reported ~30s.
+        fa = (prev_panels.get(name) or {}).get("fresh_at")
+        fa = fa if isinstance(fa, (int, float)) else None
+        # No original observation time -> age is UNKNOWN (None). Never report stale data as young.
+        age = round(now - fa) if (got and fa is not None) else None
+        mark(name, got, ("ERROR" if error else ("STALE" if got else "MISSING")), age, reason, fa)
 
     def section(name, keys, assemble, has_data):
         """Isolated assembly: FRESH on data; STALE (carry last-good) or MISSING when absent;
@@ -433,7 +442,7 @@ def build_state(prev=None):
         try:
             assemble()
             if has_data():
-                mark(name, True, "FRESH", 0, None)
+                mark(name, True, "FRESH", 0, None, now)
             else:
                 carry(name, keys, "no data this cycle")
         except _NoData:
@@ -539,8 +548,11 @@ def build_state(prev=None):
     section("monitor", ["integrity", "services", "gpus"], _monitor, lambda: bool(st.get("integrity")))
     # GPU panel provenance: FRESH only when the live exporter fed it
     _gl = st.pop("_gpu_live", False)
+    _gfa = (prev_panels.get("gpu") or {}).get("fresh_at")
+    _gfa = _gfa if isinstance(_gfa, (int, float)) else None
     mark("gpu", bool(_gl), "FRESH" if _gl else ("STALE" if st.get("gpus") else "MISSING"),
-         0 if _gl else None, None if _gl else "monitor nvidia-smi fallback")
+         0 if _gl else (round(now - _gfa) if (_gfa is not None and st.get("gpus")) else None),
+         None if _gl else "monitor nvidia-smi fallback", now if _gl else _gfa)
 
     # ---- SLURM / RKE2 / Pi-hole API / OPNsense / switch ----
     section("slurm",      ["slurm"],        lambda: st.update({"slurm": R["slurm"]}) if R.get("slurm") else None,   lambda: bool(st.get("slurm")))
