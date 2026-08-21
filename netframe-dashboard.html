@@ -346,7 +346,11 @@ const DATA={
   ],
   storage:{
     pools:[{n:'datastore',cap:23000,used:4300,h:'ONLINE'},{n:'bulk (DS4246)',cap:56000,used:12100,h:'ONLINE'}],
-    jbod:22, smart:{pass:52,warn:2,fail:0},
+    // No jbod count and no smart health are seeded here any more. Both were static literals
+    // rendered with live-health semantics, while /api/state carries no smart or jbod field
+    // and serve.py has no collector for either. The wall must not assert measurements that
+    // no probe supplies.
+    jbodConfigured:22,   // DECLARED INVENTORY, not a live reading - rendered as such
   },
   network:{
     sw:'EX3400-48P', up:41, ports:48, tenG:3, vlans:7,
@@ -556,11 +560,9 @@ function renderBottom(){
   const storage=`<div class="panel">
     <div class="ph"><span class="glyph"></span><span class="t">Storage · PBS</span><span class="sub">Randy ZFS</span></div>
     ${st.pools.map(p=>bar(p.n,(p.used/1000).toFixed(1)+'/'+(p.cap/1000).toFixed(0)+' TB','',p.used/p.cap*100,'var(--cyan)')).join('')}
-    <div class="kv2" style="margin-top:5px"><span class="k">DS4246 JBOD DRIVES</span><span class="v">${st.jbod} × 4 TB SAS</span></div>
+    <div class="kv2" style="margin-top:5px"><span class="k">DS4246 DRIVES (CONFIGURED)</span><span class="v" style="color:var(--dim)">${st.jbodConfigured} × 4 TB SAS</span></div>
     <div style="display:flex;gap:7px;margin-top:6px">
-      <span class="pill" style="color:var(--green);border-color:currentColor">SMART PASS ${st.smart.pass}</span>
-      <span class="pill" style="color:var(--yellow);border-color:currentColor">WARN ${st.smart.warn}</span>
-      <span class="pill" style="color:${st.smart.fail?'var(--red)':'var(--dim)'};border-color:currentColor">FAIL ${st.smart.fail}</span>
+      ${nfmSmartPills(st.smart)}
     </div></div>`;
 
   const network=`<div class="panel">
@@ -663,6 +665,28 @@ addEventListener('resize',fit);
      3. s.mode           backend's own derived mode
    s.sources[] is NOT authoritative: carry() sets it true whenever anything was carried.
    Unknown or absent freshness fails toward DEGRADED/UNKNOWN, never toward LIVE. */
+/* NFM-SMART-PILLS-BEGIN  (pure; offline-tested by tests/test_p3_smart.mjs - keep in sync)
+   "No source, no health claim." The DS4246 SMART pills used to render from a hard-coded literal
+   {pass:52,warn:2,fail:0}, so the wall showed a yellow "WARN 2" that no probe had ever produced -
+   an operator reasonably read it as two live JBOD warnings. /api/state carries no `smart` object and
+   serve.py has no SMART/JBOD/enclosure collector, so the only honest render is UNKNOWN.
+   An absent health field is NOT pass, NOT warn and NOT fail - and it is not zero either, because
+   "FAIL 0" is itself a measurement claim. Only a valid object carrying all three numeric counts
+   renders numbers. The separate live "SMART Trend" integrity chip is fed by netframe-monitor and is
+   untouched by this: that one has a real source. */
+function nfmSmartPills(smart){
+  const num = v => typeof v === 'number' && isFinite(v) && v >= 0;
+  const ok = smart && typeof smart === 'object'
+             && num(smart.pass) && num(smart.warn) && num(smart.fail);
+  if(!ok){
+    return '<span class="pill" style="color:var(--dim);border-color:currentColor">SMART NOT MEASURED</span>';
+  }
+  return '<span class="pill" style="color:var(--green);border-color:currentColor">SMART PASS '+smart.pass+'</span>'
+       + '<span class="pill" style="color:'+(smart.warn?'var(--yellow)':'var(--dim)')+';border-color:currentColor">WARN '+smart.warn+'</span>'
+       + '<span class="pill" style="color:'+(smart.fail?'var(--red)':'var(--dim)')+';border-color:currentColor">FAIL '+smart.fail+'</span>';
+}
+/* NFM-SMART-PILLS-END */
+
 function nfmDisplayState(s, nowSec, bound){
   bound = (typeof bound==='number') ? bound : 90;   // ~2.4 refresh cycles (REFRESH=30s + work)
   const R=(state,age,stale,reason)=>({state:state,age:age,stale:stale||[],reason:reason});
