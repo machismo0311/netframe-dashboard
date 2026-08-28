@@ -636,6 +636,67 @@ def incident_refresher():
         time.sleep(INCIDENT_REFRESH)
 
 
+# ---------------------------------------------------------------- proposal awareness (transport)
+# AWARENESS, NOT AUTHORITY. NetFRAME decides what a proposal means and whether it still needs an
+# owner; this process moves the projection it produced. There is no accept, dismiss, publish or
+# select path anywhere on this side, by construction.
+#
+# Its own thread and its own lock, like the incident feed: an unreachable proposal projection must
+# degrade one indicator and never /api/state or /api/incident.
+PROPOSAL_FEED_FILE = os.path.expanduser(
+    ENV.get("NFM_PROPOSAL_FEED_FILE")
+    or os.environ.get("NFM_PROPOSAL_FEED_FILE")
+    or "~/.local/state/netframe/incidents/proposal-dashboard.json")
+PROPOSAL_FEED_URL = (ENV.get("NFM_PROPOSAL_FEED_URL")
+                     or os.environ.get("NFM_PROPOSAL_FEED_URL") or "").strip()
+PROPOSAL_REFRESH = 10.0
+PROPOSAL_SCHEMA = "netframe-proposal-dashboard-feed/v1"
+
+PROPOSALS = {"schema": PROPOSAL_SCHEMA, "status": "FEED_UNAVAILABLE", "generated_at": None,
+             "collector": None, "summary": None, "proposals": [], "error": "not yet fetched"}
+PLOCK = threading.Lock()
+
+
+def _proposals_unavailable(err):
+    return {"schema": PROPOSAL_SCHEMA, "status": "FEED_UNAVAILABLE", "generated_at": None,
+            "collector": None, "summary": None, "proposals": [], "error": str(err)[:300]}
+
+
+def fetch_proposal_feed():
+    """One acquisition. URL when configured (the Pi), else the local projection file (Ares).
+
+    The envelope is passed through unchanged. This function does not decide whether a proposal
+    still needs an owner, whether its source is firing, or whether a count may be trusted -
+    NetFRAME already decided all of that, and re-deciding it here is how two surfaces come to
+    disagree about the same fact.
+    """
+    try:
+        if PROPOSAL_FEED_URL:
+            with urllib.request.urlopen(PROPOSAL_FEED_URL, timeout=6) as r:
+                doc = json.loads(r.read().decode("utf-8"))
+        else:
+            with open(PROPOSAL_FEED_FILE, encoding="utf-8") as f:
+                doc = json.load(f)
+    except Exception as e:
+        return _proposals_unavailable("%s: %s" % (type(e).__name__, e))
+    if not isinstance(doc, dict) or "schema" not in doc:
+        return _proposals_unavailable("response is not a proposal feed envelope")
+    return doc
+
+
+def proposal_refresher():
+    """Never raises. A projection that cannot be fetched degrades one indicator, nothing else."""
+    global PROPOSALS
+    while True:
+        try:
+            f = fetch_proposal_feed()
+        except Exception as e:
+            f = _proposals_unavailable("%s: %s" % (type(e).__name__, e))
+        with PLOCK:
+            PROPOSALS = f
+        time.sleep(PROPOSAL_REFRESH)
+
+
 # ---------------------------------------------------------------- background refresh
 STATE = {"ts": 0, "mode": "MOCK", "ok": False, "sources": {}, "panels": {}}
 LOCK = threading.Lock()
@@ -683,6 +744,13 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 body = json.dumps(STATE).encode()
             self._send(200, body, "application/json")
+        elif path == "/api/proposals":
+            # A THIRD separate endpoint. /api/state and /api/incident already have consumers and
+            # contracts; overloading either with proposal awareness would make both depend on
+            # this feature shipping correctly. 200 with a FEED_UNAVAILABLE envelope, never a 5xx.
+            with PLOCK:
+                body = json.dumps(PROPOSALS).encode()
+            self._send(200, body, "application/json")
         elif path == "/api/incident":
             # A SEPARATE endpoint, deliberately. Overloading /api/state with an unrelated schema
             # would make every existing consumer's contract depend on this feature shipping
@@ -705,7 +773,10 @@ if __name__ == "__main__":
     print("[netframe] sources:", STATE.get("sources"), "| nodes:", len(STATE.get("nodes", {})), flush=True)
     threading.Thread(target=refresher, daemon=True).start()
     threading.Thread(target=incident_refresher, daemon=True).start()
+    threading.Thread(target=proposal_refresher, daemon=True).start()
     print("[netframe] incident feed source: %s"
           % (INCIDENT_FEED_URL or INCIDENT_FEED_FILE), flush=True)
+    print("[netframe] proposal feed source: %s"
+          % (PROPOSAL_FEED_URL or PROPOSAL_FEED_FILE), flush=True)
     print("[netframe] serving  http://0.0.0.0:%d   (Ctrl-C to stop)" % PORT, flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

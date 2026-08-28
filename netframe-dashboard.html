@@ -23,7 +23,7 @@
       radial-gradient(900px 600px at 10% 110%, rgba(123,47,255,.07), transparent 60%),
       var(--base);
     color:var(--ink);padding:16px 20px 28px;overflow:hidden;
-    display:grid;grid-template-rows:66px 92px 46px auto 1fr;row-gap:13px;
+    display:grid;grid-template-rows:66px 92px 46px auto auto 1fr;row-gap:13px;
   }
   /* CRT scanlines + vignette + scan beam */
   #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:60;
@@ -244,6 +244,33 @@
   .ircv{display:block;color:var(--yellow);font-size:11px;margin-top:2px;letter-spacing:.03em}
   .inext{color:var(--ink);font-size:11.5px;margin-right:6px}
   .iauth{color:var(--dim);font-size:10.5px;letter-spacing:.12em;margin-top:4px;text-align:right}
+
+  /* ---- incident proposal awareness (NFM-PROPOSAL) ----
+     Deliberately small. With nothing awaiting review the element is display:none and its grid row
+     collapses, so the steady state costs the operations wall no space at all. */
+  #proposals{display:none}
+  #proposals.on{display:block}
+  .ppanel{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);border-left:3px solid var(--dim);padding:6px 12px;
+    max-height:132px;overflow:hidden;font-size:11.5px;line-height:1.45}
+  .ppanel.warn{border-left-color:var(--yellow)}
+  .ppanel.crit{border-left-color:var(--red)}
+  .phead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .pbadge{font-weight:700;letter-spacing:.12em;font-size:10.5px;padding:1px 7px;
+    border:1px solid currentColor;color:var(--dim)}
+  .pbadge.warn{color:var(--yellow)} .pbadge.crit{color:var(--red)} .pbadge.dim{color:var(--dim)}
+  .pcount{font-weight:700;letter-spacing:.06em;color:var(--ink)}
+  .pauth{margin-left:auto;color:var(--dim);font-size:10px;letter-spacing:.12em}
+  .ppill{display:inline-block;font-size:10px;letter-spacing:.05em;padding:0 6px;
+    margin:1px 4px 1px 0;border:1px solid currentColor;color:var(--dim)}
+  .ppill.crit{color:var(--red)} .ppill.warn{color:var(--yellow)} .ppill.dim{color:var(--dim)}
+  .prow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+  .pid{color:var(--ink);font-weight:700;letter-spacing:.03em}
+  .palert{color:var(--ink)}
+  .page{margin-left:auto;color:var(--dim);font-size:10px}
+  .pdim{color:var(--dim);font-size:10.5px}
+  .pnote{color:var(--dim);font-size:10px;letter-spacing:.02em;margin-top:1px}
+  .pfoot{color:var(--dim);font-size:10px;letter-spacing:.06em;margin-top:3px}
 </style>
 
 <div id="stage">
@@ -273,6 +300,9 @@
 
   <!-- MONITOR INTEGRITY -->
   <div id="integrity"></div>
+
+  <!-- INCIDENT PROPOSALS (hidden unless something awaits owner review) -->
+  <div id="proposals"></div>
 
   <!-- LIVE INCIDENT (hidden unless an operator explicitly selected one) -->
   <div id="incident"></div>
@@ -998,6 +1028,140 @@ function nfmIncidentPanel(feed, nowSec, bound){
 }
 /* NFM-INCIDENT-PANEL-END */
 
+/* NFM-PROPOSAL-PANEL-BEGIN  (pure; offline-tested by tests/test_p5_proposals.mjs - keep in sync)
+   AWARENESS, NOT AUTHORITY. This tells an operator that Jarvis has prepared something needing
+   review. It cannot accept, dismiss, publish, select or remediate, and there is deliberately no
+   control of any kind below - the CLI remains the review surface.
+
+   A PROPOSAL IS NOT AN INCIDENT. It will never render INCIDENT DETECTED, INCIDENT ACTIVE or
+   OUTAGE because one exists, and a proposal whose source alert CLEARED is not a resolved
+   incident - it is a condition that ended before anyone decided whether it deserved a record,
+   and it still awaits an owner.
+
+   FRESHNESS PRECEDENCE, the same discipline as the incident panel one layer out:
+     1. this projection's own age (generated_at)
+     2. the intake collector's observation age/status, which NetFRAME already classified
+     3. the individual proposal's own timestamps
+   A count is a claim only when the collector could see. Zero proposals from an unavailable or
+   stale source is not zero - it is UNKNOWN, and saying "0" there is the frozen-wall failure
+   wearing a different hat. */
+function nfmProposalState(feed, nowSec, bound){
+  bound = (typeof bound==='number') ? bound : 120;   /* ~4 producer cycles at 31s */
+  const R = o => Object.assign({show:false, status:'UNKNOWN', tone:'dim', awaiting:null,
+                                firing:null, cleared:null, feedAge:null, collector:'UNKNOWN',
+                                collectorAge:null, proposals:[], more:0, banner:null,
+                                reason:''}, o);
+  const age = (iso) => {
+    if(typeof iso!=='string' || !iso) return null;
+    const t = Date.parse(iso);
+    return isFinite(t) ? Math.max(0, nowSec - t/1000) : null;
+  };
+
+  if(!feed || typeof feed!=='object')
+    return R({show:true, status:'FEED_UNAVAILABLE', tone:'warn',
+              banner:'PROPOSAL FEED UNAVAILABLE', reason:'no feed'});
+  if(feed.status === 'FEED_UNAVAILABLE')
+    return R({show:true, status:'FEED_UNAVAILABLE', tone:'warn',
+              banner:'PROPOSAL FEED UNAVAILABLE',
+              reason:String(feed.error||'projection not reachable')});
+  if(feed.schema !== 'netframe-proposal-dashboard-feed/v1')
+    return R({show:true, status:'UNSUPPORTED', tone:'warn',
+              banner:'UNSUPPORTED PROPOSAL FEED',
+              reason:'feed schema '+String(feed.schema)+' is not understood'});
+
+  const feedAge = age(feed.generated_at);
+  const coll = (feed.collector && typeof feed.collector==='object') ? feed.collector : {};
+  const summary = (feed.summary && typeof feed.summary==='object') ? feed.summary : {};
+  const list = Array.isArray(feed.proposals) ? feed.proposals : [];
+  const base = {feedAge:feedAge, collector:String(coll.status||'UNKNOWN'),
+                collectorAge:(typeof coll.age_seconds==='number') ? coll.age_seconds : null,
+                proposals:list, more:(typeof feed.more_not_shown==='number')
+                                     ? feed.more_not_shown : 0};
+
+  /* Precedence 1: a projection older than the bound cannot describe now. */
+  if(feedAge === null)
+    return R(Object.assign({}, base, {show:true, status:'STALE', tone:'warn',
+      banner:'PROPOSAL FEED AGE UNKNOWN', reason:'feed carries no usable generated_at'}));
+  if(feedAge > bound)
+    return R(Object.assign({}, base, {show:true, status:'STALE', tone:'warn',
+      banner:'PROPOSAL FEED STALE',
+      reason:'feed age '+Math.round(feedAge)+'s exceeds '+bound+'s'}));
+
+  /* Precedence 2: NetFRAME already classified the collector. A fresh envelope carrying an
+     unavailable or stale observation is not a current count. */
+  if(coll.status === 'UNAVAILABLE' || coll.status === 'UNKNOWN')
+    return R(Object.assign({}, base, {show:true, status:'INTAKE_UNAVAILABLE', tone:'warn',
+      banner:'INTAKE SOURCE UNAVAILABLE',
+      reason:String(coll.reason||'the intake collector could not read its source')}));
+  if(coll.status === 'STALE')
+    return R(Object.assign({}, base, {show:true, status:'INTAKE_STALE', tone:'warn',
+      banner:'PROPOSAL INTAKE STALE',
+      reason:String(coll.reason||'the last intake observation is old')}));
+  if(summary.counts_are_authoritative !== true)
+    return R(Object.assign({}, base, {show:true, status:'INTAKE_UNAVAILABLE', tone:'warn',
+      banner:'INTAKE SOURCE UNAVAILABLE',
+      reason:'the producer did not mark these counts authoritative'}));
+
+  const awaiting = (typeof summary.awaiting_owner_review==='number')
+                   ? summary.awaiting_owner_review : null;
+  if(awaiting === null)
+    return R(Object.assign({}, base, {show:true, status:'INTAKE_UNAVAILABLE', tone:'warn',
+      banner:'INTAKE SOURCE UNAVAILABLE', reason:'no count was supplied'}));
+  return R(Object.assign({}, base, {
+    show: awaiting > 0, status:'OK', tone: awaiting > 0 ? 'warn' : 'dim',
+    awaiting: awaiting,
+    firing: (typeof summary.pending_firing==='number') ? summary.pending_firing : null,
+    cleared:(typeof summary.pending_cleared==='number') ? summary.pending_cleared : null,
+    reason: awaiting > 0 ? 'proposals await owner review'
+                         : 'no proposals await owner review'}));
+}
+
+function nfmProposalPanel(feed, nowSec, bound){
+  const d = nfmProposalState(feed, nowSec, bound);
+  if(!d.show) return '';
+  const E = nfmEsc;
+  const pill = (t, tone) => '<span class="ppill '+E(tone)+'">'+E(t)+'</span>';
+  let h = '<div class="phead">'
+        +   '<span class="pbadge '+E(d.tone)+'">INCIDENT PROPOSALS</span>';
+  if(d.banner){
+    /* An empty local list under a broken source must never read as zero. */
+    h += pill(d.banner, 'warn')
+       + '<span class="pdim">'+E(d.reason)+'</span>';
+  } else {
+    h += '<span class="pcount">'+E(d.awaiting)+' AWAITING REVIEW</span>'
+       + (d.firing ? pill(d.firing+' SOURCE STILL FIRING','crit') : '')
+       + (d.cleared ? pill(d.cleared+' SOURCE ALERT CLEARED','dim') : '');
+  }
+  h += '<span class="pauth">OWNER REVIEW REQUIRED · MAX_AUTO_CLASS 0</span></div>';
+
+  (d.proposals||[]).forEach(p => {
+    if(!p || typeof p!=='object') return;
+    const cleared = p.source_state === 'CLEARED';
+    h += '<div class="prow">'
+       +   '<span class="pid">'+E(p.proposal_id)+'</span>'
+       +   '<span class="palert">'+E(p.alertname)+'</span>'
+       +   pill(p.source||'unknown', 'dim')   /* pill() escapes; escaping here too would render the escape sequences */
+       +   pill(cleared ? 'SOURCE ALERT CLEARED' : 'SOURCE STILL FIRING',
+                cleared ? 'dim' : 'crit')
+       +   pill(p.proposal_state, 'warn')
+       +   (p.suggested_event ? pill('SUGGESTS '+p.suggested_event, 'dim') : '')
+       +   ((p.suggested_affected_systems||[]).length
+              ? pill((p.suggested_affected_systems||[]).join(', '), 'dim') : '')
+       +   (p.possible_existing_incident_count
+              ? pill(p.possible_existing_incident_count+' POSSIBLE EXISTING INCIDENTS','dim') : '')
+       +   '<span class="page">'+E(nfmAgeText(p.age_seconds))+'</span>'
+       + '</div>';
+    if(cleared)
+      h += '<div class="pnote">source alert cleared before review; the proposal still awaits an '
+         + 'owner decision and no incident was resolved</div>';
+  });
+  if(d.more) h += '<div class="pnote">+ '+E(d.more)+' MORE NOT SHOWN</div>';
+  h += '<div class="pfoot">a proposal is not an incident; review with '
+     + '<code>netframe incident proposals</code></div>';
+  return '<div class="ppanel '+E(d.tone)+'">'+h+'</div>';
+}
+/* NFM-PROPOSAL-PANEL-END */
+
 function updateMode(ds, s){
   const b=el('modebadge'); if(!b) return;
   const worst=(names)=>{ if(!s||!s.panels||!names.length) return null;
@@ -1090,9 +1254,26 @@ async function pullIncident(){
   }catch(e){ /* a renderer fault must not stop the clock or the operations pull */ }
 }
 
+/* Polled separately, caught separately. An unreachable proposal projection degrades one strip
+   and cannot touch /api/state, /api/incident or the live incident panel. */
+async function pullProposals(){
+  let feed = null;
+  try{
+    const r = await fetch('/api/proposals',{cache:'no-store'});
+    if(r.ok) feed = await r.json();
+  }catch(e){ feed = null; }
+  try{
+    const host = el('proposals'); if(!host) return;
+    const html = nfmProposalPanel(feed, Date.now()/1000);
+    host.innerHTML = html;
+    host.className = html ? 'on' : '';
+  }catch(e){ /* a renderer fault must not stop the clock or the operations pull */ }
+}
+
 /* boot */
 renderAll();renderClock();fit();
 setInterval(renderClock,1000);
 pull(); setInterval(pull,3000);
 pullIncident(); setInterval(pullIncident,5000);
+pullProposals(); setInterval(pullProposals,5000);
 </script>

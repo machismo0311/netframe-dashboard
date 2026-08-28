@@ -1,0 +1,66 @@
+{
+ "authority": {
+  "max_auto_class": 0,
+  "review_with": "./netframe incident proposals",
+  "statement": "OWNER REVIEW REQUIRED. The wall shows that a proposal exists; it cannot accept, dismiss, publish, select or remediate anything."
+ },
+ "collector": {
+  "age_seconds": 20.0,
+  "firing_alerts": 1,
+  "observed_at": "2026-08-28T12:59:40Z",
+  "reason": "the intake collector observed its source recently",
+  "status": "AVAILABLE"
+ },
+ "generated_at": "2026-08-28T13:00:00Z",
+ "max_visible": 3,
+ "more_not_shown": 0,
+ "proposals": [
+  {
+   "active_at": "2026-08-23T16:29:22.848552179Z",
+   "age_seconds": 21600.0,
+   "alert_cleared_observed_at": null,
+   "alertname": "RegistryCertExpiringSoon",
+   "authority": {
+    "max_auto_class": 0,
+    "owner_review_required": true,
+    "wall_may_act": false
+   },
+   "possible_existing_incident_count": 0,
+   "proposal_created_at": "2026-08-28T07:00:00Z",
+   "proposal_id": "AP-ffefb03106c630ca",
+   "proposal_state": "PENDING",
+   "source": "prometheus",
+   "source_state": "FIRING",
+   "suggested_affected_systems": [],
+   "suggested_event": "DETECTED"
+  },
+  {
+   "active_at": "2026-08-28T06:02:37.848552179Z",
+   "age_seconds": 21600.0,
+   "alert_cleared_observed_at": "2026-08-28T12:00:00Z",
+   "alertname": "NodeSustainedIoWait",
+   "authority": {
+    "max_auto_class": 0,
+    "owner_review_required": true,
+    "wall_may_act": false
+   },
+   "possible_existing_incident_count": 1,
+   "proposal_created_at": "2026-08-28T07:00:00Z",
+   "proposal_id": "AP-392f9aad6d171404",
+   "proposal_state": "ALERT_RESOLVED",
+   "source": "prometheus",
+   "source_state": "CLEARED",
+   "suggested_affected_systems": [
+    "pve4"
+   ],
+   "suggested_event": "DETECTED"
+  }
+ ],
+ "schema": "netframe-proposal-dashboard-feed/v1",
+ "summary": {
+  "awaiting_owner_review": 2,
+  "counts_are_authoritative": true,
+  "pending_cleared": 1,
+  "pending_firing": 1
+ }
+}
