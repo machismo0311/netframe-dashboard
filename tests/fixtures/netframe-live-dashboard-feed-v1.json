@@ -1,0 +1,356 @@
+{
+ "authority": "transport and display state only; not incident evidence",
+ "error": null,
+ "generated_at": "2026-08-27T13:00:30Z",
+ "schema": "netframe-live-dashboard-feed/v1",
+ "selection": {
+  "incident_id": "INC-2026-08-27-01-contract-fixture",
+  "selected_at": "2026-08-27T12:45:00Z",
+  "selected_by": "operator"
+ },
+ "state": {
+  "alerts": [],
+  "authority": {
+   "forbidden": [
+    "restart service",
+    "move VM",
+    "edit config",
+    "silence alert",
+    "close incident",
+    "change risk",
+    "FSD",
+    "rollback",
+    "append lifecycle event",
+    "publish capture"
+   ],
+   "max_auto_class": 0,
+   "permitted": [
+    "observe",
+    "classify",
+    "correlate",
+    "recommend read-only investigation"
+   ],
+   "statement": "Live Incident Mode observes and reasons. OWNER ACTION REQUIRED for any change, and for recording any lifecycle fact."
+  },
+  "changes": [],
+  "changes_since_previous_cycle": [
+   {
+    "from": "ELEVATED",
+    "identity": "metric:obs-core:storage wait (iowait)",
+    "kind": "CHANGED",
+    "to": "NORMAL"
+   },
+   {
+    "from": "firing",
+    "identity": "alert:NodeSustainedIoWait:instance=obs-core,severity=critical",
+    "kind": "RECOVERED",
+    "to": null
+   }
+  ],
+  "correlation": {
+   "assessment": "MODERATE",
+   "authority": "OWNER ACTION REQUIRED for any remediation - Jarvis MAX_AUTO_CLASS = 0",
+   "causation": "NOT_PROVEN",
+   "contradicting_evidence": [],
+   "coverage": {
+    "alerts": "UNAVAILABLE",
+    "changes": "COMPLETE",
+    "dependency": "UNAVAILABLE",
+    "incident_lifecycle": "PARTIAL",
+    "metrics": "COMPLETE",
+    "recurrence": "COMPLETE",
+    "risk": "UNAVAILABLE",
+    "security": "UNAVAILABLE"
+   },
+   "dimensions_supporting": [
+    "METRIC_ANOMALY",
+    "SYSTEM_OVERLAP",
+    "TEMPORAL_PROXIMITY"
+   ],
+   "generated_from": {
+    "episode_index": 0,
+    "incident_events": 2,
+    "systems": [
+     "obs-core"
+    ]
+   },
+   "hypotheses": [
+    "STORAGE_DEGRADATION"
+   ],
+   "missing_evidence": [
+    {
+     "confidence": "RECORDED",
+     "detail": null,
+     "dimension": "CHANGE_PROXIMITY",
+     "locator": null,
+     "source": "git log",
+     "stance": "MISSING",
+     "statement": "no change in the bounded look-back had a subsystem or system reason to be relevant"
+    },
+    {
+     "confidence": "UNKNOWN",
+     "detail": null,
+     "dimension": "RISK_LINKAGE",
+     "locator": null,
+     "source": "operations/risk-register.csv",
+     "stance": "MISSING",
+     "statement": "risk register not readable"
+    },
+    {
+     "confidence": "RECORDED",
+     "detail": null,
+     "dimension": "HISTORICAL_RECURRENCE",
+     "locator": null,
+     "source": "incident timeline",
+     "stance": "MISSING",
+     "statement": "no other recorded incident shares an affected system"
+    },
+    {
+     "confidence": "UNKNOWN",
+     "detail": null,
+     "dimension": "DEPENDENCY_CONTEXT",
+     "locator": null,
+     "source": "knowledge-graph.json",
+     "stance": "MISSING",
+     "statement": "knowledge graph unavailable"
+    }
+   ],
+   "next_investigation": {
+    "action": "compare SMART attributes and kernel I/O errors on the affected host across the episode window (read-only)",
+    "authority": "read-only evidence gathering; OWNER ACTION REQUIRED for any change",
+    "discriminates": "STORAGE_DEGRADATION",
+    "grounded_in": [
+     "no change in the bounded look-back had a subsystem or system reason to be relevant",
+     "risk register not readable"
+    ]
+   },
+   "root_cause_status_from_source": "UNKNOWN",
+   "schema": "netframe-correlation/v1",
+   "subject": {
+    "episode": 0,
+    "incident_id": "INC-2026-08-27-01-contract-fixture"
+   },
+   "supporting_evidence": [
+    {
+     "confidence": "RECORDED",
+     "detail": "this precision supports minute-level claims",
+     "dimension": "TEMPORAL_PROXIMITY",
+     "locator": null,
+     "source": "incident timeline",
+     "stance": "SUPPORTS",
+     "statement": "episode is time-bounded from 2026-08-27T12:41Z at SECOND precision"
+    },
+    {
+     "confidence": "RECORDED",
+     "detail": null,
+     "dimension": "SYSTEM_OVERLAP",
+     "locator": null,
+     "source": "incident record",
+     "stance": "SUPPORTS",
+     "statement": "incident record explicitly names affected system(s): obs-core"
+    },
+    {
+     "confidence": "MEASURED",
+     "detail": "7/7 samples above 0.25",
+     "dimension": "METRIC_ANOMALY",
+     "locator": "avg by(instance) (rate(node_cpu_seconds_total{mode=\"iowait\"}[5m]))",
+     "source": "prometheus",
+     "stance": "SUPPORTS",
+     "statement": "obs-core storage wait (iowait) was elevated during the episode (window 0.900 vs baseline 0.020)"
+    }
+   ],
+   "window": {
+    "baseline_window": {
+     "end": "2026-08-27T12:41:12Z",
+     "start": "2026-08-26T12:41:12Z"
+    },
+    "episode_end": null,
+    "episode_start": {
+     "end": "2026-08-27T12:41:12Z",
+     "precision": "SECOND",
+     "start": "2026-08-27T12:41:12Z",
+     "supports_minute_claims": true
+    },
+    "evidence_window": {
+     "end": "2026-08-27T14:41:12Z",
+     "precision": "SECOND",
+     "start": "2026-08-27T10:41:12Z",
+     "supports_minute_claims": true
+    }
+   }
+  },
+  "cycle": {
+   "at": "2026-08-27T13:00:30Z",
+   "completeness": "COMPLETE",
+   "duration_s": null
+  },
+  "episode_window_metrics": [
+   {
+    "age": "30s",
+    "baseline": 0.02,
+    "current": 0.9,
+    "freshness": "FRESH",
+    "host": "obs-core",
+    "identity": "metric:obs-core:storage wait (iowait)",
+    "metric": "storage wait (iowait)",
+    "observed_at": "2026-08-27T13:00:00Z",
+    "partial_baseline": false,
+    "samples": 7,
+    "stance": "SUPPORTS",
+    "threshold": 0.25,
+    "verdict": "ELEVATED"
+   }
+  ],
+  "evidence_coverage": {
+   "alerts": {
+    "age": "30s",
+    "age_s": 30.0,
+    "carried_forward": false,
+    "detail": "0 rule(s) firing estate-wide",
+    "observed_at": "2026-08-27T13:00:00Z",
+    "status": "FRESH"
+   },
+   "changes": {
+    "age": "0s",
+    "age_s": 0.0,
+    "carried_forward": false,
+    "detail": "0 commit(s) in the attribution window",
+    "observed_at": "2026-08-27T13:00:30Z",
+    "status": "CURRENT-ONLY"
+   },
+   "dependency": {
+    "age": "0s",
+    "age_s": 0.0,
+    "carried_forward": false,
+    "detail": "0 asset(s) with failure-domain membership in the CURRENT graph",
+    "observed_at": "2026-08-27T13:00:30Z",
+    "status": "UNAVAILABLE"
+   },
+   "episode_metrics": {
+    "age": "30s",
+    "age_s": 30.0,
+    "carried_forward": false,
+    "detail": "1 series, newest sample in the episode window is 0s old",
+    "observed_at": "2026-08-27T13:00:00Z",
+    "status": "FRESH"
+   },
+   "metrics": {
+    "age": "30s",
+    "age_s": 30.0,
+    "carried_forward": false,
+    "detail": "1 series over the last 30m, newest sample 0s old",
+    "observed_at": "2026-08-27T13:00:00Z",
+    "status": "FRESH"
+   },
+   "risk": {
+    "age": "0s",
+    "age_s": 0.0,
+    "carried_forward": false,
+    "detail": "0 register entries",
+    "observed_at": "2026-08-27T13:00:30Z",
+    "status": "UNAVAILABLE"
+   }
+  },
+  "impact": {
+   "context_label": "CURRENT-CONTEXT: derived from the graph as it stands now, not from the incident's recorded impact",
+   "current_dependency_context": [],
+   "recorded_affected_systems": [
+    "obs-core"
+   ]
+  },
+  "lifecycle": {
+   "age": "19m18s",
+   "age_reason": "",
+   "age_seconds": 1158.0,
+   "events": [
+    {
+     "at": "2026-08-27T12:41:12Z",
+     "event": "OPENED",
+     "precision": "SECOND",
+     "summary": "obs-core storage latency"
+    },
+    {
+     "at": "2026-08-27T12:43:05Z",
+     "event": "DETECTED",
+     "precision": "SECOND",
+     "summary": "alert fired"
+    }
+   ],
+   "latencies": {
+    "detection": {
+     "display": "1m53s",
+     "reason": "",
+     "seconds": 113.0
+    },
+    "mitigation": {
+     "display": "UNKNOWN",
+     "reason": "no MITIGATED event in this episode",
+     "seconds": null
+    },
+    "resolution": {
+     "display": "UNKNOWN",
+     "reason": "no RESOLVED event in this episode",
+     "seconds": null
+    }
+   },
+   "onset": "2026-08-27T12:41:12Z",
+   "onset_precision": "SECOND",
+   "resolution_recorded": false,
+   "status": "OPEN"
+  },
+  "metrics": [
+   {
+    "age": "30s",
+    "baseline": 0.02,
+    "current": 0.02,
+    "freshness": "FRESH",
+    "host": "obs-core",
+    "identity": "metric:obs-core:storage wait (iowait)",
+    "metric": "storage wait (iowait)",
+    "observed_at": "2026-08-27T13:00:00Z",
+    "partial_baseline": false,
+    "samples": 7,
+    "stance": "CONTRADICTS",
+    "threshold": 0.25,
+    "verdict": "NORMAL"
+   }
+  ],
+  "next_investigation": {
+   "action": "compare SMART attributes and kernel I/O errors on the affected host across the episode window (read-only)",
+   "adapted_this_cycle": false,
+   "authority": "read-only evidence gathering. Jarvis does not run this. OWNER ACTION REQUIRED.",
+   "discriminates": "STORAGE_DEGRADATION",
+   "executed": false,
+   "grounded_in": [
+    "no change in the bounded look-back had a subsystem or system reason to be relevant",
+    "risk register not readable"
+   ]
+  },
+  "notes": [],
+  "pending_captures": [],
+  "recovery_regressions": [],
+  "recovery_signals": [
+   {
+    "evidence": "obs-core:storage wait (iowait) is NORMAL against its baseline",
+    "identity": "metric:obs-core:storage wait (iowait)",
+    "observed_at": "2026-08-27T13:00:30Z",
+    "signal": "metric returned to baseline"
+   },
+   {
+    "evidence": "NodeSustainedIoWait is no longer firing",
+    "identity": "alert:NodeSustainedIoWait:instance=obs-core,severity=critical",
+    "observed_at": "2026-08-27T13:00:30Z",
+    "signal": "firing alert cleared"
+   }
+  ],
+  "risks": [],
+  "schema": "netframe-live-incident/v1",
+  "subject": {
+   "episode": 0,
+   "incident_id": "INC-2026-08-27-01-contract-fixture"
+  },
+  "view_status": "RECOVERY_SIGNALS"
+ },
+ "state_generated_at": "2026-08-27T13:00:30Z",
+ "status": "OK"
+}

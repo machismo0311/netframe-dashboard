@@ -573,6 +573,69 @@ def build_state(prev=None):
     st["has_error"] = any(p["state"] == "ERROR" for p in st["panels"].values())
     return st
 
+# ---------------------------------------------------------------- live incident feed (transport)
+# THE WALL DOES NOT COLLECT INCIDENT EVIDENCE. One producer on Ares runs Live Incident Mode and
+# writes netframe-live-dashboard-feed/v1; this process only moves those bytes. Ares reads the file
+# the producer wrote, the Pi reads the same envelope from Ares over HTTP. Two collectors would mean
+# two correlation runs and two Prometheus workloads for one question, and R-29 records what SSH
+# fan-out does to jarvis sshd.
+#
+# Acquisition happens on its OWN thread with its OWN lock, so an unreachable feed can never slow,
+# block or fail /api/state. Losing the incident panel must not cost the operations wall.
+INCIDENT_FEED_FILE = os.path.expanduser(
+    ENV.get("NFM_INCIDENT_FEED_FILE")
+    or os.environ.get("NFM_INCIDENT_FEED_FILE")
+    or "~/.local/state/netframe/incidents/live-dashboard.json")
+INCIDENT_FEED_URL = (ENV.get("NFM_INCIDENT_FEED_URL")
+                     or os.environ.get("NFM_INCIDENT_FEED_URL") or "").strip()
+INCIDENT_REFRESH = 10.0
+FEED_SCHEMA = "netframe-live-dashboard-feed/v1"
+
+INCIDENT = {"schema": FEED_SCHEMA, "status": "FEED_UNAVAILABLE", "generated_at": None,
+            "selection": None, "state": None, "state_generated_at": None,
+            "error": "not yet fetched"}
+ILOCK = threading.Lock()
+
+
+def _feed_unavailable(err):
+    return {"schema": FEED_SCHEMA, "status": "FEED_UNAVAILABLE", "generated_at": None,
+            "selection": None, "state": None, "state_generated_at": None, "error": str(err)[:300]}
+
+
+def fetch_incident_feed():
+    """One acquisition. URL when configured (the Pi), else the local producer's file (Ares).
+
+    The envelope is passed through UNCHANGED. This function does not interpret it, does not decide
+    freshness and does not reason about the incident: the renderer owns presentation and Jarvis
+    owns meaning. Its only judgement is whether it got a well-formed envelope at all.
+    """
+    try:
+        if INCIDENT_FEED_URL:
+            with urllib.request.urlopen(INCIDENT_FEED_URL, timeout=6) as r:
+                doc = json.loads(r.read().decode("utf-8"))
+        else:
+            with open(INCIDENT_FEED_FILE, encoding="utf-8") as f:
+                doc = json.load(f)
+    except Exception as e:
+        return _feed_unavailable("%s: %s" % (type(e).__name__, e))
+    if not isinstance(doc, dict) or "schema" not in doc:
+        return _feed_unavailable("response is not a feed envelope")
+    return doc
+
+
+def incident_refresher():
+    """Never raises. A feed that cannot be fetched degrades the panel and nothing else."""
+    global INCIDENT
+    while True:
+        try:
+            f = fetch_incident_feed()
+        except Exception as e:                                  # belt and braces
+            f = _feed_unavailable("%s: %s" % (type(e).__name__, e))
+        with ILOCK:
+            INCIDENT = f
+        time.sleep(INCIDENT_REFRESH)
+
+
 # ---------------------------------------------------------------- background refresh
 STATE = {"ts": 0, "mode": "MOCK", "ok": False, "sources": {}, "panels": {}}
 LOCK = threading.Lock()
@@ -620,6 +683,14 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 body = json.dumps(STATE).encode()
             self._send(200, body, "application/json")
+        elif path == "/api/incident":
+            # A SEPARATE endpoint, deliberately. Overloading /api/state with an unrelated schema
+            # would make every existing consumer's contract depend on this feature shipping
+            # correctly. 200 with a FEED_UNAVAILABLE envelope, not a 5xx: the page needs to render
+            # "the feed is down" rather than guess from a transport error.
+            with ILOCK:
+                body = json.dumps(INCIDENT).encode()
+            self._send(200, body, "application/json")
         elif path == "/healthz":
             self._send(200, b"ok", "text/plain")
         else:
@@ -633,5 +704,8 @@ if __name__ == "__main__":
     STATE = build_state()
     print("[netframe] sources:", STATE.get("sources"), "| nodes:", len(STATE.get("nodes", {})), flush=True)
     threading.Thread(target=refresher, daemon=True).start()
+    threading.Thread(target=incident_refresher, daemon=True).start()
+    print("[netframe] incident feed source: %s"
+          % (INCIDENT_FEED_URL or INCIDENT_FEED_FILE), flush=True)
     print("[netframe] serving  http://0.0.0.0:%d   (Ctrl-C to stop)" % PORT, flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

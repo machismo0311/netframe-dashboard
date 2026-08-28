@@ -23,7 +23,7 @@
       radial-gradient(900px 600px at 10% 110%, rgba(123,47,255,.07), transparent 60%),
       var(--base);
     color:var(--ink);padding:16px 20px 28px;overflow:hidden;
-    display:grid;grid-template-rows:66px 92px 46px 1fr;row-gap:13px;
+    display:grid;grid-template-rows:66px 92px 46px auto 1fr;row-gap:13px;
   }
   /* CRT scanlines + vignette + scan beam */
   #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:60;
@@ -213,6 +213,37 @@
     letter-spacing:.14em;font-size:12px;text-align:center;border:1px dashed rgba(255,255,255,.08);padding:10px}
   .offline .big2{color:var(--yellow);font-size:14px;letter-spacing:.2em}
   .dead{color:var(--red)!important;border-color:rgba(255,42,109,.4)!important}
+
+  /* ---- live incident strip (NFM-INCIDENT) ----
+     Bounded on purpose: the operator must see the incident AND the estate at once, so this is a
+     full-width strip with a hard max-height, not a takeover. With nothing selected the element is
+     display:none and its grid row collapses - the operations wall is unchanged. */
+  #incident{display:none}
+  #incident.on{display:block}
+  .ipanel{position:relative;background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line);border-left:3px solid var(--dim);padding:8px 12px;
+    max-height:200px;overflow:hidden;font-size:12px;line-height:1.5}
+  .ipanel.crit{border-left-color:var(--red)}
+  .ipanel.warn{border-left-color:var(--yellow)}
+  .ipanel.dim{border-left-color:var(--dim)}
+  .ihead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .ibadge{font-weight:700;letter-spacing:.12em;font-size:11px;padding:1px 7px;
+    border:1px solid currentColor;color:var(--dim)}
+  .ibadge.crit{color:var(--red)} .ibadge.warn{color:var(--yellow)} .ibadge.dim{color:var(--dim)}
+  .iid{font-weight:700;letter-spacing:.04em;color:var(--ink)}
+  .iage{margin-left:auto;color:var(--dim);font-size:11px;letter-spacing:.06em}
+  .iwarn{color:var(--red);font-size:11px;margin:2px 0 4px;letter-spacing:.03em}
+  .irow{display:flex;gap:8px;align-items:flex-start;margin:2px 0}
+  .ilab{flex:0 0 132px;color:var(--dim);font-size:10.5px;letter-spacing:.14em;padding-top:2px}
+  .ipill{display:inline-block;font-size:10.5px;letter-spacing:.05em;padding:0 6px;
+    margin:1px 4px 1px 0;border:1px solid currentColor;color:var(--dim)}
+  .ipill.crit{color:var(--red)} .ipill.warn{color:var(--yellow)}
+  .ipill.ok{color:var(--green)} .ipill.dim{color:var(--dim)}
+  .idim{color:var(--dim);font-size:11px}
+  .ictr{display:block;color:var(--dim);font-size:11px;margin-top:1px}
+  .ircv{display:block;color:var(--yellow);font-size:11px;margin-top:2px;letter-spacing:.03em}
+  .inext{color:var(--ink);font-size:11.5px;margin-right:6px}
+  .iauth{color:var(--dim);font-size:10.5px;letter-spacing:.12em;margin-top:4px;text-align:right}
 </style>
 
 <div id="stage">
@@ -242,6 +273,9 @@
 
   <!-- MONITOR INTEGRITY -->
   <div id="integrity"></div>
+
+  <!-- LIVE INCIDENT (hidden unless an operator explicitly selected one) -->
+  <div id="incident"></div>
 
   <!-- MAIN -->
   <div id="main">
@@ -724,6 +758,246 @@ function nfmAgeText(sec){
   return Math.round(sec/86400)+'d';
 }
 
+/* NFM-INCIDENT-PANEL-BEGIN  (pure; offline-tested by tests/test_p4_incident.mjs - keep in sync)
+   The wall DISPLAYS Jarvis's reasoning. It does not become Jarvis: nothing here thresholds a
+   metric, correlates anything, or decides what an incident means. Every judgement below is about
+   PRESENTATION - is this projection current, and does the wording match what the model actually
+   says.
+
+   FRESHNESS PRECEDENCE, and it is the whole point:
+     1. the FEED's own age            (generated_at)   -> stale here overrides everything inside
+     2. the PROJECTION's age          (state_generated_at, preserved across a failed producer run)
+     3. the LiveIncidentState cycle   (cycle.at)
+     4. the individual evidence domains
+   A stale outer envelope containing metrics:FRESH is NOT fresh. Those values were fresh when the
+   projection was made and have been frozen ever since - which is exactly the wall-monitor defect
+   (a LIVE badge over a 12d13.7h outage) reappearing one layer further out.
+
+   Three words this panel will never print for an open incident: HEALTHY, ALL CLEAR, RESOLVED. */
+function nfmEsc(v){
+  return String(v==null?'':v).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function nfmIncidentState(feed, nowSec, bound){
+  bound = (typeof bound==='number') ? bound : 90;   /* 3 producer cycles (30s) + transport */
+  const R = o => Object.assign({show:true, status:'UNKNOWN', freshness:'UNKNOWN', tone:'warn',
+                                feedAge:null, projAge:null, cycleAge:null, lastKnown:false,
+                                incidentId:null, episode:null, lifecycleStatus:null,
+                                viewStatus:null, cycleAt:null, completeness:null,
+                                banner:null, reason:''}, o);
+  const age = (iso) => {
+    if(typeof iso!=='string' || !iso) return null;
+    const t = Date.parse(iso);
+    return isFinite(t) ? Math.max(0, nowSec - t/1000) : null;
+  };
+
+  if(!feed || typeof feed!=='object')
+    return R({status:'FEED_UNAVAILABLE', freshness:'UNAVAILABLE', tone:'crit',
+              banner:'INCIDENT FEED UNAVAILABLE', reason:'no feed'});
+  if(feed.schema !== 'netframe-live-dashboard-feed/v1')
+    return R({status:'UNSUPPORTED', freshness:'UNAVAILABLE', tone:'crit',
+              banner:'UNSUPPORTED INCIDENT FEED',
+              reason:'feed schema '+String(feed.schema)+' is not understood by this dashboard'});
+  if(feed.status === 'FEED_UNAVAILABLE')
+    return R({status:'FEED_UNAVAILABLE', freshness:'UNAVAILABLE', tone:'crit',
+              banner:'INCIDENT FEED UNAVAILABLE', reason:String(feed.error||'feed not reachable')});
+  if(feed.status === 'NO_SELECTION')
+    /* NOT health. It means no operator pointed this surface at an incident. */
+    return R({show:false, status:'NO_SELECTION', freshness:'UNKNOWN', tone:'dim',
+              reason:'no incident selected for display'});
+
+  const feedAge = age(feed.generated_at);
+  const projAge = age(feed.state_generated_at);
+  const st = (feed.state && typeof feed.state==='object') ? feed.state : null;
+  const sel = (feed.selection && typeof feed.selection==='object') ? feed.selection : null;
+  const cyc = (st && st.cycle && typeof st.cycle==='object') ? st.cycle : null;
+  const cycleAge = cyc ? age(cyc.at) : null;
+  const base = {
+    feedAge:feedAge, projAge:projAge, cycleAge:cycleAge,
+    incidentId: (st && st.subject && st.subject.incident_id) || (sel && sel.incident_id) || null,
+    episode: (st && st.subject) ? st.subject.episode : null,
+    lifecycleStatus: (st && st.lifecycle) ? st.lifecycle.status : null,
+    viewStatus: st ? st.view_status : null,
+    cycleAt: cyc ? cyc.at : null,
+    completeness: cyc ? cyc.completeness : null,
+    lastKnown: feed.status === 'PRODUCER_FAILED'
+  };
+
+  if(feedAge === null)
+    return R(Object.assign({}, base, {status:feed.status, freshness:'UNKNOWN', tone:'warn',
+      banner:'INCIDENT FEED AGE UNKNOWN', reason:'feed carries no usable generated_at'}));
+  if(feedAge > bound)
+    /* Precedence rule 1. Nothing inside can rescue this. */
+    return R(Object.assign({}, base, {status:feed.status, freshness:'STALE', tone:'crit',
+      banner:'INCIDENT FEED STALE',
+      reason:'feed age '+Math.round(feedAge)+'s exceeds '+bound+'s'}));
+  if(!st)
+    return R(Object.assign({}, base, {status:feed.status, freshness:'UNAVAILABLE', tone:'crit',
+      banner: feed.status==='PRODUCER_FAILED' ? 'INCIDENT PROJECTION UNAVAILABLE'
+                                              : 'INCIDENT FEED CARRIES NO PROJECTION',
+      reason:String(feed.error||'no projection in feed')}));
+  if(st.schema !== 'netframe-live-incident/v1')
+    return R(Object.assign({}, base, {status:'UNSUPPORTED', freshness:'UNAVAILABLE', tone:'crit',
+      banner:'UNSUPPORTED INCIDENT FEED',
+      reason:'projection schema '+String(st.schema)+' is not understood'}));
+
+  /* Precedence rule 2/3: a carried projection ages on its OWN clock, never the envelope's. */
+  const effAge = (base.lastKnown && projAge!==null) ? projAge
+               : (projAge!==null ? projAge : cycleAge);
+  if(effAge === null)
+    return R(Object.assign({}, base, {status:feed.status, freshness:'UNKNOWN', tone:'warn',
+      banner:'INCIDENT PROJECTION AGE UNKNOWN', reason:'projection carries no usable timestamp'}));
+  if(effAge > bound)
+    /* A stale carried projection must still say WHY the producer stopped: "old" and "old because
+       Prometheus is unreachable" are different operator problems. */
+    return R(Object.assign({}, base, {status:feed.status, freshness:'STALE', tone:'crit',
+      banner: base.lastKnown ? 'INCIDENT PROJECTION LAST KNOWN' : 'INCIDENT PROJECTION STALE',
+      reason:'projection age '+Math.round(effAge)+'s exceeds '+bound+'s'
+             + (feed.error ? ' — '+String(feed.error) : '')}));
+  if(base.lastKnown)
+    return R(Object.assign({}, base, {status:feed.status, freshness:'STALE', tone:'warn',
+      banner:'INCIDENT PROJECTION LAST KNOWN',
+      reason:String(feed.error||'the last producer cycle failed')}));
+  return R(Object.assign({}, base, {status:'OK', freshness:'FRESH',
+    tone: nfmIncidentTone(base.viewStatus),
+    reason:'projection current'}));
+}
+
+/* View status -> visual weight. There is NO green arm for an open incident, on purpose.
+   OPEN_NO_CURRENT_SIGNAL means the record is open and nothing is currently firing; that is not
+   health, and RECOVERY_SIGNALS is not a resolution. Only a CLOSED_RECORD is allowed to be quiet,
+   and even then it is dim rather than green - the operator, not the estate, closed it. */
+function nfmIncidentTone(viewStatus){
+  if(viewStatus === 'CLOSED_RECORD')  return 'dim';
+  if(viewStatus === 'ACTIVE')         return 'crit';
+  return 'warn';
+}
+
+/* Evidence-domain freshness AFTER the outer projection has had its say (precedence rule 4).
+   A domain that said FRESH inside a stale projection was fresh THEN. It is not fresh now. */
+function nfmDomainState(domainStatus, projectionFreshness){
+  const s = (typeof domainStatus === 'string' && domainStatus) ? domainStatus : 'UNKNOWN';
+  if(projectionFreshness === 'FRESH') return s;
+  if(s === 'FRESH') return 'STALE';
+  return s === 'CURRENT-ONLY' ? 'STALE' : s;
+}
+
+function nfmIncidentPanel(feed, nowSec, bound){
+  const d = nfmIncidentState(feed, nowSec, bound);
+  if(!d.show) return '';
+  const E = nfmEsc, A = (s)=> (s==null||!isFinite(s)) ? '?' : nfmAgeText(s);
+  const st = (feed && feed.state) || null;
+  const row = (label, body) => '<div class="irow"><span class="ilab">'+E(label)+'</span>'+body+'</div>';
+  const pill = (txt, tone) => '<span class="ipill '+E(tone)+'">'+E(txt)+'</span>';
+  let h = '';
+
+  /* --- identity + projection truth ------------------------------------------------ */
+  h += '<div class="ihead">'
+     +   '<span class="ibadge '+E(d.tone)+'">INCIDENT</span>'
+     +   '<span class="iid">'+E(d.incidentId || 'UNKNOWN')+'</span>'
+     +   (d.episode!=null ? '<span class="idim">episode '+E(d.episode)+'</span>' : '')
+     +   (d.lifecycleStatus ? pill('LIFECYCLE '+d.lifecycleStatus,
+                                   d.lifecycleStatus==='RESOLVED'?'dim':'warn') : '')
+     +   (d.viewStatus ? pill(d.viewStatus, d.tone) : '')
+     +   (d.banner ? pill(d.banner, 'crit') : '')
+     +   '<span class="iage">'+(d.freshness==='FRESH' ? 'PROJECTION FRESH · '
+                                                      : 'PROJECTION '+E(d.freshness)+' · ')
+     +   'cycle '+E(d.cycleAt||'UNKNOWN')+' · age '+E(A(d.cycleAge))+'</span>'
+     + '</div>';
+  if(d.freshness !== 'FRESH')
+    h += '<div class="iwarn">'+E(d.banner||'PROJECTION NOT CURRENT')+' — '+E(d.reason)
+       + '. Values below were true when the projection was made, not now.</div>';
+  if(!st) return '<div class="ipanel '+E(d.tone)+'">'+h+'</div>';
+
+  /* --- lifecycle + impact --------------------------------------------------------- */
+  const lc = st.lifecycle || {};
+  if(lc.resolution_recorded !== true && d.lifecycleStatus !== 'RESOLVED')
+    h += row('LIFECYCLE', '<span>'+E(d.lifecycleStatus||'UNKNOWN')
+           + ' · NO RESOLUTION EVENT RECORDED</span>');
+  else if(d.lifecycleStatus === 'RESOLVED')
+    h += row('LIFECYCLE', '<span>CLOSED RECORD · RESOLVED '
+           + E((lc.events||[]).filter(e=>e.event==='RESOLVED').map(e=>e.at)[0] || 'UNKNOWN')
+           + ' · DISPLAY SELECTION STILL ACTIVE</span>');
+
+  const imp = st.impact || {};
+  const rec = imp.recorded_affected_systems || [];
+  h += row('IMPACT', rec.length ? rec.map(s=>pill(s,'warn')).join('')
+                                : '<span class="idim">none recorded</span>');
+  const ctx = imp.current_dependency_context || [];
+  if(ctx.length)
+    h += row('CURRENT CONTEXT',
+             ctx.slice(0,6).map(c=>pill(c.of+' → '+c.domain,'dim')).join('')
+             + '<span class="idim"> CURRENT-CONTEXT · does not rewrite recorded impact</span>');
+
+  /* --- what changed --------------------------------------------------------------- */
+  const tr = (st.changes_since_previous_cycle || []).filter(t=>t && t.kind!=='UNCHANGED');
+  const reg = st.recovery_regressions || [];
+  let chg = reg.map(r=>pill('RECOVERY REGRESSION '+r.identity,'crit')).join('');
+  chg += tr.slice(0,6).map(t=>pill(t.kind+' '+t.identity
+          + (t.kind==='CHANGED' ? ' '+t.from+'→'+t.to : ''),
+          t.kind==='NEW'?'crit':(t.kind==='RECOVERED'?'ok':'warn'))).join('');
+  h += row('WHAT CHANGED', chg || '<span class="idim">nothing changed this cycle</span>');
+
+  /* --- current signals ------------------------------------------------------------ */
+  const cov = st.evidence_coverage || {};
+  let sig = ['metrics','alerts'].map(k=>{
+    const e = cov[k];
+    if(!e) return pill(k.toUpperCase()+' NOT MEASURED','dim');
+    const s = nfmDomainState(e.status, d.freshness);
+    return pill(k.toUpperCase()+' '+s+(e.age?' '+e.age:''), s==='FRESH'?'ok':'warn');
+  }).join('');
+  sig += (st.metrics||[]).filter(m=>m && m.verdict && m.verdict!=='EXCLUDED').slice(0,3)
+          .map(m=>pill(m.host+' '+m.metric+' '+m.verdict,
+                       m.verdict==='ELEVATED'?'crit':'dim')).join('');
+  const firing = (st.alerts||[]).filter(a=>a && a.state==='firing' && a.relevant);
+  sig += firing.slice(0,3).map(a=>pill('FIRING '+a.alertname,'crit')).join('');
+  h += row('CURRENT SIGNALS', sig || '<span class="idim">NOT MEASURED</span>');
+
+  /* --- correlation ---------------------------------------------------------------- */
+  const c = st.correlation || null;
+  if(!c) h += row('CORRELATION','<span class="idim">UNAVAILABLE</span>');
+  else {
+    let cb = pill('ASSESSMENT '+(c.assessment||'UNKNOWN'),'warn')
+           + pill('HYPOTHESIS '+((c.hypotheses||[])[0]||'NO_HYPOTHESIS'),'dim')
+           + pill('CAUSATION '+(c.causation||'NOT_PROVEN'),
+                  c.causation==='PROVEN_BY_SOURCE'?'warn':'dim');
+    (c.contradicting_evidence||[]).slice(0,2)
+      .forEach(e=>{ cb += '<span class="ictr">CONTRADICTS '+E(e.statement)+'</span>'; });
+    h += row('CORRELATION', cb);
+  }
+
+  /* --- recovery ------------------------------------------------------------------- */
+  const rs = st.recovery_signals || [];
+  if(rs.length)
+    h += row('RECOVERY', rs.slice(0,3).map(s=>pill(s.signal,'ok')).join('')
+           + '<span class="ircv">RECOVERY SIGNALS PRESENT · INCIDENT STATUS '
+           + E(d.lifecycleStatus||'OPEN')
+           + ' · OWNER HAS NOT RECORDED RESOLVED</span>');
+
+  /* --- pending capture ------------------------------------------------------------ */
+  const pc = st.pending_captures || [];
+  if(pc.length)
+    h += row('CAPTURE', pill('PENDING CAPTURE '+pc.length,'warn')
+           + '<span class="idim">operator publishes; the wall never does</span>');
+
+  /* --- next investigation + authority --------------------------------------------- */
+  const ni = st.next_investigation || null;
+  h += row('NEXT INVESTIGATION',
+           ni && ni.action
+             ? '<span class="inext">'+E(ni.action)+'</span>'
+               + pill(ni.executed===true ? 'EXECUTED' : 'NOT EXECUTED',
+                      ni.executed===true ? 'crit' : 'dim')
+               + pill('OWNER ACTION REQUIRED','dim')
+             : '<span class="idim">UNKNOWN</span>');
+  const au = st.authority || {};
+  h += '<div class="iauth">ADVISORY · MAX_AUTO_CLASS '
+     + E(au.max_auto_class==null ? 'UNKNOWN' : au.max_auto_class)
+     + ' · the wall performs no remediation</div>';
+  return '<div class="ipanel '+E(d.tone)+'">'+h+'</div>';
+}
+/* NFM-INCIDENT-PANEL-END */
+
 function updateMode(ds, s){
   const b=el('modebadge'); if(!b) return;
   const worst=(names)=>{ if(!s||!s.panels||!names.length) return null;
@@ -799,8 +1073,26 @@ async function pull(){
   }
 }
 
+/* The incident panel is polled SEPARATELY and its failures are caught SEPARATELY. An
+   unreachable incident feed must degrade one strip, never the operations wall: the base dashboard
+   predates this feature and has to keep working without it. */
+async function pullIncident(){
+  let feed = null;
+  try{
+    const r = await fetch('/api/incident',{cache:'no-store'});
+    if(r.ok) feed = await r.json();
+  }catch(e){ feed = null; }
+  try{
+    const host = el('incident'); if(!host) return;
+    const html = nfmIncidentPanel(feed, Date.now()/1000);
+    host.innerHTML = html;
+    host.className = html ? 'on' : '';
+  }catch(e){ /* a renderer fault must not stop the clock or the operations pull */ }
+}
+
 /* boot */
 renderAll();renderClock();fit();
 setInterval(renderClock,1000);
 pull(); setInterval(pull,3000);
+pullIncident(); setInterval(pullIncident,5000);
 </script>
