@@ -25,7 +25,7 @@ let fails = [];
 const chk = (n, c, d) => { console.log((c ? 'PASS  ' : 'FAIL  ') + n + (!c && d ? '  [' + d + ']' : '')); if (!c) fails.push(n); };
 
 /* ---------------------------------------------------------------- pinned contract fixture */
-const raw = readFileSync(join(HERE, 'fixtures', 'netframe-proposal-dashboard-feed-v1.json'));
+const raw = readFileSync(join(HERE, 'fixtures', 'netframe-proposal-dashboard-feed-v2.json'));
 const contract = readFileSync(join(HERE, 'fixtures', 'PROPOSAL-CONTRACT.md'), 'utf8');
 const sha = createHash('sha256').update(raw).digest('hex');
 chk('the pinned proposal contract fixture matches the producer repository digest',
@@ -39,10 +39,10 @@ const feed = (o) => Object.assign(JSON.parse(JSON.stringify(FIX)), o || {});
   const d = nfmProposalState(feed(), NOW);
   const h = nfmProposalPanel(feed(), NOW);
   chk('a feed with proposals awaiting review is shown', d.show === true);
-  chk('...with the awaiting count', d.awaiting === 2 && h.includes('2 AWAITING REVIEW'));
-  chk('...split into still-firing and cleared', d.firing === 1 && d.cleared === 1);
+  chk('...with the awaiting count', d.awaiting === 3 && h.includes('3 AWAITING REVIEW'));
+  chk('...split by typed condition', d.firing === 1 && d.cleared === 1 && d.detections === 1);
   chk('...the proposal id is rendered', h.includes(FIX.proposals[0].proposal_id));
-  chk('...and the alert name', h.includes(FIX.proposals[0].alertname));
+  chk('...and the title', h.includes(FIX.proposals[0].title));
   chk('...with the source named', h.includes('prometheus'));
   chk('...and the suggested event', h.includes('SUGGESTS DETECTED'));
   chk('OWNER REVIEW REQUIRED is stated', h.includes('OWNER REVIEW REQUIRED'));
@@ -67,7 +67,7 @@ const feed = (o) => Object.assign(JSON.parse(JSON.stringify(FIX)), o || {});
   chk('a cleared proposal is NOT rendered as resolved',
       !/PROPOSAL RESOLVED|INCIDENT RESOLVED/.test(h.toUpperCase()));
   chk('the cleared proposal is still counted as awaiting',
-      nfmProposalState(feed(), NOW).awaiting === 2);
+      nfmProposalState(feed(), NOW).awaiting === 3);
 }
 
 /* ---------------------------------------------------------------- no source, no claim */
@@ -124,10 +124,10 @@ const feed = (o) => Object.assign(JSON.parse(JSON.stringify(FIX)), o || {});
   chk('...and never rendered as zero',
       !/\b0 AWAITING REVIEW\b/.test(nfmProposalPanel(null, NOW)));
   chk('an unknown schema fails visibly',
-      nfmProposalState(feed({ schema: 'netframe-proposal-dashboard-feed/v2' }), NOW).status
+      nfmProposalState(feed({ schema: 'netframe-proposal-dashboard-feed/v3' }), NOW).status
       === 'UNSUPPORTED');
   chk('a FEED_UNAVAILABLE envelope from the backend is honoured',
-      nfmProposalState({ schema: 'netframe-proposal-dashboard-feed/v1',
+      nfmProposalState({ schema: 'netframe-proposal-dashboard-feed/v2',
                          status: 'FEED_UNAVAILABLE', error: 'HTTPError: 503' }, NOW).status
       === 'FEED_UNAVAILABLE');
   chk('...and transport failure is distinct from intake failure',
@@ -191,7 +191,7 @@ const feed = (o) => Object.assign(JSON.parse(JSON.stringify(FIX)), o || {});
   chk('...while the proposal panel still shows what awaits review',
       nfmProposalPanel(feed(), NOW) !== '');
   chk('this is the point of the feature: awareness without selection',
-      nfmProposalState(feed(), NOW).awaiting === 2);
+      nfmProposalState(feed(), NOW).awaiting === 3);
   chk('with an incident selected BOTH surfaces render',
       nfmIncidentPanel(ifeed, inow) !== '' && nfmProposalPanel(feed(), NOW) !== '');
   chk('a proposal never becomes the displayed incident',
@@ -204,19 +204,79 @@ const feed = (o) => Object.assign(JSON.parse(JSON.stringify(FIX)), o || {});
 {
   const nasty = '<script>alert(1)</script>';
   const bad = feed({ proposals: [Object.assign({}, FIX.proposals[0], {
-    proposal_id: nasty + '-id', alertname: nasty + '-alert', source: nasty + '-src',
+    proposal_id: nasty + '-id', title: nasty + '-alert', source_kind: nasty + '-src',
     proposal_state: nasty + '-state', suggested_event: nasty + '-ev',
-    suggested_affected_systems: [nasty + '-sys'] })] });
+    detail: nasty + '-detail', suggested_affected_systems: [nasty + '-sys'] })] });
   const h = nfmProposalPanel(bad, NOW);
   chk('no raw <script> survives', !h.includes('<script>'));
   chk('...it is escaped as text', h.includes('&lt;script&gt;'));
-  for (const f of ['-id', '-alert', '-src', '-state', '-ev', '-sys'])
+  for (const f of ['-id', '-alert', '-src', '-state', '-ev', '-sys', '-detail'])
     chk(`${f} is escaped`, h.includes('&lt;script&gt;alert(1)&lt;/script&gt;' + f));
   chk('no javascript: or handler can be injected', !/javascript:|onerror=|onload=/i.test(h));
   chk('raw annotations are not in the contract at all',
       !('annotations' in FIX.proposals[0]) && !JSON.stringify(FIX).includes('annotation'));
   chk('raw labels are not in the contract at all',
       !('labels' in FIX.proposals[0]) && !JSON.stringify(FIX).includes('severity'));
+  chk('no raw security payload is in the contract at all',
+      !/full_log|srcip|dstuser|predecoder|"location"/.test(JSON.stringify(FIX)));
+}
+
+/* ---------------------------------------------------------------- mixed sources */
+{
+  const h = nfmProposalPanel(feed(), NOW);
+  const wz = FIX.proposals.find(p => p.source_kind === 'wazuh');
+  const pr = FIX.proposals.filter(p => p.source_kind === 'prometheus');
+  chk('the fixture carries both sources', !!wz && pr.length === 2);
+  chk('a Wazuh detection renders DETECTION RECORDED', h.includes('DETECTION RECORDED'));
+  /* Scope to the Wazuh proposal's OWN row. A regex that runs to the end of the panel would
+     match the Prometheus rows below it and prove nothing. */
+  const rowOf = (html, id) => {
+    const i = html.indexOf(id);
+    if (i < 0) return '';
+    const start = html.lastIndexOf('<div class="prow">', i);
+    const end = html.indexOf('<div class="prow">', i);
+    return html.slice(start < 0 ? i : start, end < 0 ? html.length : end);
+  };
+  const wzRow = rowOf(h, wz.proposal_id);
+  chk('the Wazuh row is isolated for inspection', wzRow.includes(wz.proposal_id));
+  chk('...and never says SOURCE STILL FIRING', !wzRow.includes('SOURCE STILL FIRING'), wzRow);
+  chk('...and never says SOURCE ALERT CLEARED', !wzRow.includes('SOURCE ALERT CLEARED'), wzRow);
+  chk('...it says DETECTION RECORDED', wzRow.includes('DETECTION RECORDED'));
+  chk('...carrying the native rule level as a detail, not a severity',
+      h.includes(wz.detail) && /level \d+/.test(wz.detail));
+  chk('...with no SEV or severity vocabulary',
+      !/SEV-|CRITICAL|HIGH RISK/.test(h.toUpperCase()));
+  chk('...and the caveat that a detection is not proof of breach',
+      h.includes('not proof of breach or compromise'));
+  chk('a Prometheus alert still renders SOURCE STILL FIRING', h.includes('SOURCE STILL FIRING'));
+  chk('...and SOURCE ALERT CLEARED', h.includes('SOURCE ALERT CLEARED'));
+  chk('the two sources are labelled', h.includes('prometheus') && h.includes('wazuh'));
+  chk('the count covers both sources', nfmProposalState(feed(), NOW).awaiting === 3);
+  for (const bad of ['BREACH', 'COMPROMISED', 'ATTACK', 'INTRUSION'])
+    chk(`a detection is never called a ${bad.toLowerCase()}`,
+        !h.toUpperCase().replace('NOT PROOF OF BREACH OR COMPROMISE', '').includes(bad));
+  const unknown = feed({ proposals: [Object.assign({}, wz, { source_condition: 'WAT' })] });
+  const uh = nfmProposalPanel(unknown, NOW);
+  chk('an unrecognised condition renders the raw enum, not a guess', uh.includes('WAT'));
+  /* Again scoped to the row: the header still carries the summary's own firing count, which is
+     a different fact from what this proposal's condition is. */
+  chk('...and its row is not silently shown as firing',
+      !rowOf(uh, wz.proposal_id).includes('SOURCE STILL FIRING'), rowOf(uh, wz.proposal_id));
+}
+
+/* ---------------------------------------------------------------- per-source coverage */
+{
+  const wzDown = feed({ sources: Object.assign({}, FIX.sources,
+                          { wazuh: { status: 'UNAVAILABLE', reason: 'guest exec failed' } }),
+                        summary: { awaiting_owner_review: null, pending_firing: null,
+                                   pending_cleared: null, pending_detections: null,
+                                   counts_are_authoritative: false } });
+  const d = nfmProposalState(wzDown, NOW);
+  chk('one source down makes the total non-authoritative', d.status === 'INTAKE_UNAVAILABLE');
+  chk('...and it is not rendered as zero',
+      !/\b0 AWAITING REVIEW\b/.test(nfmProposalPanel(wzDown, NOW)));
+  chk('the feed reports the two sources separately',
+      FIX.sources && FIX.sources.prometheus && FIX.sources.wazuh);
 }
 
 /* ---------------------------------------------------------------- backend independence */

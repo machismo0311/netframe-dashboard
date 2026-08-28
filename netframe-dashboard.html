@@ -1048,9 +1048,9 @@ function nfmIncidentPanel(feed, nowSec, bound){
 function nfmProposalState(feed, nowSec, bound){
   bound = (typeof bound==='number') ? bound : 120;   /* ~4 producer cycles at 31s */
   const R = o => Object.assign({show:false, status:'UNKNOWN', tone:'dim', awaiting:null,
-                                firing:null, cleared:null, feedAge:null, collector:'UNKNOWN',
-                                collectorAge:null, proposals:[], more:0, banner:null,
-                                reason:''}, o);
+                                firing:null, cleared:null, detections:null, feedAge:null,
+                                collector:'UNKNOWN', collectorAge:null, proposals:[], more:0,
+                                banner:null, reason:''}, o);
   const age = (iso) => {
     if(typeof iso!=='string' || !iso) return null;
     const t = Date.parse(iso);
@@ -1064,7 +1064,7 @@ function nfmProposalState(feed, nowSec, bound){
     return R({show:true, status:'FEED_UNAVAILABLE', tone:'warn',
               banner:'PROPOSAL FEED UNAVAILABLE',
               reason:String(feed.error||'projection not reachable')});
-  if(feed.schema !== 'netframe-proposal-dashboard-feed/v1')
+  if(feed.schema !== 'netframe-proposal-dashboard-feed/v2')
     return R({show:true, status:'UNSUPPORTED', tone:'warn',
               banner:'UNSUPPORTED PROPOSAL FEED',
               reason:'feed schema '+String(feed.schema)+' is not understood'});
@@ -1112,6 +1112,7 @@ function nfmProposalState(feed, nowSec, bound){
     awaiting: awaiting,
     firing: (typeof summary.pending_firing==='number') ? summary.pending_firing : null,
     cleared:(typeof summary.pending_cleared==='number') ? summary.pending_cleared : null,
+    detections:(typeof summary.pending_detections==='number') ? summary.pending_detections : null,
     reason: awaiting > 0 ? 'proposals await owner review'
                          : 'no proposals await owner review'}));
 }
@@ -1130,19 +1131,28 @@ function nfmProposalPanel(feed, nowSec, bound){
   } else {
     h += '<span class="pcount">'+E(d.awaiting)+' AWAITING REVIEW</span>'
        + (d.firing ? pill(d.firing+' SOURCE STILL FIRING','crit') : '')
+       + (d.detections ? pill(d.detections+' WAZUH DETECTION','crit') : '')
        + (d.cleared ? pill(d.cleared+' SOURCE ALERT CLEARED','dim') : '');
   }
   h += '<span class="pauth">OWNER REVIEW REQUIRED · MAX_AUTO_CLASS 0</span></div>';
 
+  /* The typed condition decides the wording. A Wazuh archive event is never FIRING and never
+     CLEARED - it happened once and does not un-happen - so it gets its own label rather than
+     borrowing an alert's lifecycle. Anything unrecognised renders as the raw enum, not as a
+     guess. */
+  const CONDITION = {FIRING:'SOURCE STILL FIRING', CLEARED:'SOURCE ALERT CLEARED',
+                     DETECTION_RECORDED:'DETECTION RECORDED'};
   (d.proposals||[]).forEach(p => {
     if(!p || typeof p!=='object') return;
-    const cleared = p.source_state === 'CLEARED';
+    const cond = String(p.source_condition||'UNKNOWN');
+    const cleared = cond === 'CLEARED';
+    const detection = cond === 'DETECTION_RECORDED';
     h += '<div class="prow">'
        +   '<span class="pid">'+E(p.proposal_id)+'</span>'
-       +   '<span class="palert">'+E(p.alertname)+'</span>'
-       +   pill(p.source||'unknown', 'dim')   /* pill() escapes; escaping here too would render the escape sequences */
-       +   pill(cleared ? 'SOURCE ALERT CLEARED' : 'SOURCE STILL FIRING',
-                cleared ? 'dim' : 'crit')
+       +   '<span class="palert">'+E(p.title)+'</span>'
+       +   pill(p.source_kind||'unknown', 'dim')   /* pill() escapes; escaping here too would render the escape sequences */
+       +   pill(CONDITION[cond] || cond, cleared ? 'dim' : 'crit')
+       +   (p.detail ? pill(p.detail, 'dim') : '')
        +   pill(p.proposal_state, 'warn')
        +   (p.suggested_event ? pill('SUGGESTS '+p.suggested_event, 'dim') : '')
        +   ((p.suggested_affected_systems||[]).length
@@ -1154,6 +1164,9 @@ function nfmProposalPanel(feed, nowSec, bound){
     if(cleared)
       h += '<div class="pnote">source alert cleared before review; the proposal still awaits an '
          + 'owner decision and no incident was resolved</div>';
+    if(detection)
+      h += '<div class="pnote">a security detection was recorded; it is not proof of breach or '
+         + 'compromise, and the rule level is Wazuh\'s own scale, not a NetFRAME severity</div>';
   });
   if(d.more) h += '<div class="pnote">+ '+E(d.more)+' MORE NOT SHOWN</div>';
   h += '<div class="pfoot">a proposal is not an incident; review with '

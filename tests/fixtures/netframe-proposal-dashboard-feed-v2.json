@@ -1,0 +1,107 @@
+{
+ "authority": {
+  "max_auto_class": 0,
+  "review_with": "./netframe incident proposals",
+  "statement": "OWNER REVIEW REQUIRED. The wall shows that a proposal exists; it cannot accept, dismiss, publish, select or remediate anything."
+ },
+ "collector": {
+  "age_seconds": 20.0,
+  "firing_alerts": 1,
+  "observed_at": "2026-08-28T12:59:40Z",
+  "reason": "the intake collector observed its source recently",
+  "status": "AVAILABLE"
+ },
+ "generated_at": "2026-08-28T13:00:00Z",
+ "max_visible": 3,
+ "more_not_shown": 0,
+ "proposals": [
+  {
+   "age_seconds": 21600.0,
+   "alert_cleared_observed_at": null,
+   "authority": {
+    "max_auto_class": 0,
+    "owner_review_required": true,
+    "wall_may_act": false
+   },
+   "detail": null,
+   "possible_existing_incident_count": 0,
+   "proposal_created_at": "2026-08-28T07:00:00Z",
+   "proposal_id": "AP-ffefb03106c630ca",
+   "proposal_state": "PENDING",
+   "source_condition": "FIRING",
+   "source_event_time": "2026-08-23T16:29:22.848552179Z",
+   "source_kind": "prometheus",
+   "suggested_affected_systems": [],
+   "suggested_event": "DETECTED",
+   "title": "RegistryCertExpiringSoon"
+  },
+  {
+   "age_seconds": 10800.0,
+   "alert_cleared_observed_at": null,
+   "authority": {
+    "max_auto_class": 0,
+    "owner_review_required": true,
+    "wall_may_act": false
+   },
+   "detail": "rule 5712 level 10 on pve3",
+   "possible_existing_incident_count": 0,
+   "proposal_created_at": "2026-08-28T10:00:00Z",
+   "proposal_id": "WZP-a1b2c3d4e5f60718",
+   "proposal_state": "PENDING",
+   "source_condition": "DETECTION_RECORDED",
+   "source_event_time": "2026-08-28T09:42:13.109+0000",
+   "source_kind": "wazuh",
+   "suggested_affected_systems": [
+    "pve3"
+   ],
+   "suggested_event": "DETECTED",
+   "title": "sshd: brute force trying to get access to the system"
+  },
+  {
+   "age_seconds": 21600.0,
+   "alert_cleared_observed_at": "2026-08-28T12:00:00Z",
+   "authority": {
+    "max_auto_class": 0,
+    "owner_review_required": true,
+    "wall_may_act": false
+   },
+   "detail": null,
+   "possible_existing_incident_count": 1,
+   "proposal_created_at": "2026-08-28T07:00:00Z",
+   "proposal_id": "AP-392f9aad6d171404",
+   "proposal_state": "ALERT_RESOLVED",
+   "source_condition": "CLEARED",
+   "source_event_time": "2026-08-28T06:02:37.848552179Z",
+   "source_kind": "prometheus",
+   "suggested_affected_systems": [
+    "pve4"
+   ],
+   "suggested_event": "DETECTED",
+   "title": "NodeSustainedIoWait"
+  }
+ ],
+ "schema": "netframe-proposal-dashboard-feed/v2",
+ "sources": {
+  "prometheus": {
+   "age_seconds": 20.0,
+   "firing_alerts": 1,
+   "observed_at": "2026-08-28T12:59:40Z",
+   "reason": "the intake collector observed its source recently",
+   "status": "AVAILABLE"
+  },
+  "wazuh": {
+   "age_seconds": 15.0,
+   "epoch": "2026-08-28T01:00:00Z",
+   "observed_at": "2026-08-28T12:59:45Z",
+   "reason": "the Wazuh intake collector observed its source recently",
+   "status": "AVAILABLE"
+  }
+ },
+ "summary": {
+  "awaiting_owner_review": 3,
+  "counts_are_authoritative": true,
+  "pending_cleared": 1,
+  "pending_detections": 1,
+  "pending_firing": 1
+ }
+}
