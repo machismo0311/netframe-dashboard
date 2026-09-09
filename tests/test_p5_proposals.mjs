@@ -39,7 +39,18 @@ const feed = (o) => Object.assign(JSON.parse(JSON.stringify(FIX)), o || {});
   const d = nfmProposalState(feed(), NOW);
   const h = nfmProposalPanel(feed(), NOW);
   chk('a feed with proposals awaiting review is shown', d.show === true);
-  chk('...with the awaiting count', d.awaiting === 3 && h.includes('3 AWAITING REVIEW'));
+  /* The headline is WORK, not retained objects. The fixture holds 3 awaiting proposals of which
+     only 2 need a person; a wall that says 3 sends the operator to look at nothing. */
+  chk('...with the owner-action count, not the retained-object count',
+      d.action === 2 && d.awaiting === 3 && h.includes('2 OWNER ACTION REQUIRED'),
+      `action=${d.action} awaiting=${d.awaiting}`);
+  chk('...and resolved history is reported separately and dimmed',
+      d.history === 1 && h.includes('1 RESOLVED / HISTORY'));
+  chk('...with the security detection called out in its own right',
+      d.security === 1 && h.includes('1 SECURITY DETECTION'));
+  chk('...and a pending security detection sorts ahead of live and historical items',
+      FIX.proposals.map(p => p.action_class).join(',') === 'SECURITY,ACTIVE,HISTORY',
+      FIX.proposals.map(p => p.action_class).join(','));
   chk('...split by typed condition', d.firing === 1 && d.cleared === 1 && d.detections === 1);
   chk('...the proposal id is rendered', h.includes(FIX.proposals[0].proposal_id));
   chk('...and the title', h.includes(FIX.proposals[0].title));

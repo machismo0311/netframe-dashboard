@@ -12,30 +12,25 @@
   "status": "AVAILABLE"
  },
  "generated_at": "2026-08-28T13:00:00Z",
+ "history_families": [
+  {
+   "newest": "2026-08-28T07:00:00Z",
+   "occurrences": 1,
+   "oldest": "2026-08-28T07:00:00Z",
+   "proposal_ids": [
+    "AP-392f9aad6d171404"
+   ],
+   "suggested_affected_systems": [
+    "pve4"
+   ],
+   "title": "NodeSustainedIoWait"
+  }
+ ],
  "max_visible": 3,
  "more_not_shown": 0,
  "proposals": [
   {
-   "age_seconds": 21600.0,
-   "alert_cleared_observed_at": null,
-   "authority": {
-    "max_auto_class": 0,
-    "owner_review_required": true,
-    "wall_may_act": false
-   },
-   "detail": null,
-   "possible_existing_incident_count": 0,
-   "proposal_created_at": "2026-08-28T07:00:00Z",
-   "proposal_id": "AP-ffefb03106c630ca",
-   "proposal_state": "PENDING",
-   "source_condition": "FIRING",
-   "source_event_time": "2026-08-23T16:29:22.848552179Z",
-   "source_kind": "prometheus",
-   "suggested_affected_systems": [],
-   "suggested_event": "DETECTED",
-   "title": "RegistryCertExpiringSoon"
-  },
-  {
+   "action_class": "SECURITY",
    "age_seconds": 10800.0,
    "alert_cleared_observed_at": null,
    "authority": {
@@ -58,6 +53,28 @@
    "title": "sshd: brute force trying to get access to the system"
   },
   {
+   "action_class": "ACTIVE",
+   "age_seconds": 21600.0,
+   "alert_cleared_observed_at": null,
+   "authority": {
+    "max_auto_class": 0,
+    "owner_review_required": true,
+    "wall_may_act": false
+   },
+   "detail": null,
+   "possible_existing_incident_count": 0,
+   "proposal_created_at": "2026-08-28T07:00:00Z",
+   "proposal_id": "AP-ffefb03106c630ca",
+   "proposal_state": "PENDING",
+   "source_condition": "FIRING",
+   "source_event_time": "2026-08-23T16:29:22.848552179Z",
+   "source_kind": "prometheus",
+   "suggested_affected_systems": [],
+   "suggested_event": "DETECTED",
+   "title": "RegistryCertExpiringSoon"
+  },
+  {
+   "action_class": "HISTORY",
    "age_seconds": 21600.0,
    "alert_cleared_observed_at": "2026-08-28T12:00:00Z",
    "authority": {
@@ -100,8 +117,11 @@
  "summary": {
   "awaiting_owner_review": 3,
   "counts_are_authoritative": true,
+  "owner_action_required": 2,
   "pending_cleared": 1,
   "pending_detections": 1,
-  "pending_firing": 1
+  "pending_firing": 1,
+  "resolved_history": 1,
+  "security_pending": 1
  }
 }

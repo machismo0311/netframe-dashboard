@@ -1107,14 +1107,23 @@ function nfmProposalState(feed, nowSec, bound){
   if(awaiting === null)
     return R(Object.assign({}, base, {show:true, status:'INTAKE_UNAVAILABLE', tone:'warn',
       banner:'INTAKE SOURCE UNAVAILABLE', reason:'no count was supplied'}));
+  /* THE HEADLINE IS WORK, NOT OBJECTS. awaiting_owner_review counts every retained proposal,
+     including alerts that cleared before anyone looked; on 2026-09-09 that read 27 while nothing
+     needed a person. owner_action_required is the count that decides whether to walk over. A feed
+     that predates the field falls back to the old number rather than silently reading zero. */
+  const action = (typeof summary.owner_action_required==='number')
+                 ? summary.owner_action_required : awaiting;
+  const history = (typeof summary.resolved_history==='number') ? summary.resolved_history : null;
+  const security = (typeof summary.security_pending==='number') ? summary.security_pending : null;
   return R(Object.assign({}, base, {
-    show: awaiting > 0, status:'OK', tone: awaiting > 0 ? 'warn' : 'dim',
-    awaiting: awaiting,
+    show: action > 0 || (history || 0) > 0, status:'OK',
+    tone: security > 0 ? 'crit' : (action > 0 ? 'warn' : 'dim'),
+    awaiting: awaiting, action: action, history: history, security: security,
     firing: (typeof summary.pending_firing==='number') ? summary.pending_firing : null,
     cleared:(typeof summary.pending_cleared==='number') ? summary.pending_cleared : null,
     detections:(typeof summary.pending_detections==='number') ? summary.pending_detections : null,
-    reason: awaiting > 0 ? 'proposals await owner review'
-                         : 'no proposals await owner review'}));
+    reason: action > 0 ? 'owner action required'
+                       : 'no owner action required'}));
 }
 
 function nfmProposalPanel(feed, nowSec, bound){
@@ -1129,10 +1138,15 @@ function nfmProposalPanel(feed, nowSec, bound){
     h += pill(d.banner, 'warn')
        + '<span class="pdim">'+E(d.reason)+'</span>';
   } else {
-    h += '<span class="pcount">'+E(d.awaiting)+' AWAITING REVIEW</span>'
+    /* Security first, then live operational, then history - and history is always dim, so it
+       cannot compete with a detection for the operator's eye. */
+    h += '<span class="pcount">'+E(d.action)+' OWNER ACTION REQUIRED</span>'
+       + (d.security ? pill(d.security+' SECURITY DETECTION','crit') : '')
        + (d.firing ? pill(d.firing+' SOURCE STILL FIRING','crit') : '')
-       + (d.detections ? pill(d.detections+' WAZUH DETECTION','crit') : '')
-       + (d.cleared ? pill(d.cleared+' SOURCE ALERT CLEARED','dim') : '');
+       + (d.detections && !d.security ? pill(d.detections+' WAZUH DETECTION','crit') : '')
+       + (d.action === 0 ? pill('NONE PENDING','dim') : '')
+       + ((d.history || d.cleared)
+            ? pill((d.history !== null ? d.history : d.cleared)+' RESOLVED / HISTORY','dim') : '');
   }
   h += '<span class="pauth">OWNER REVIEW REQUIRED · MAX_AUTO_CLASS 0</span></div>';
 
