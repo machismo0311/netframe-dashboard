@@ -420,10 +420,27 @@ _WAN_POLICY_CMD = r'''qm guest exec 100 --timeout 20 -- /bin/sh -c 'php -r "\$c=
 #: pf netif -> dashboard WAN key. Mirrors opnsense_stats()'s idmap one layer down.
 _PF_NETIF = {"vtnet0": "wan1", "vtnet2": "wan2"}
 
+#: Same seam as the incident and proposal feeds: URL when configured (the wall Pi), else probe
+#: locally (Ares). The Pi reaches pve4/jarvis/quarkylab through forced commands and deliberately
+#: cannot reach pve2 at all, so it consumes this posture from Ares over HTTP rather than being
+#: given the estate access to derive it. One projection, computed once, on the host that can.
+WAN_POLICY_URL = (ENV.get("NFM_WAN_FEED_URL")
+                  or os.environ.get("NFM_WAN_FEED_URL") or "").strip()
+
 def wan_policy():
     """Failover posture from the authoritative source. Returns None on ANY doubt - the renderer
     treats a missing field as UNKNOWN and refuses to show DUAL-WAN READY, so a broken probe can
     never manufacture a healthy-looking wall."""
+    if WAN_POLICY_URL:
+        try:
+            with urllib.request.urlopen(WAN_POLICY_URL, timeout=6) as r:
+                doc = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            return None
+        # Only a well-formed posture envelope is accepted. Anything else is UNKNOWN, never a guess.
+        if not isinstance(doc, dict) or not isinstance(doc.get("armed"), bool):
+            return None
+        return doc
     out = sh(SSH + ["pve2", _WAN_POLICY_CMD], timeout=30)
     try:
         payload = json.loads(out)
@@ -817,6 +834,18 @@ class H(BaseHTTPRequestHandler):
             with PLOCK:
                 body = json.dumps(PROPOSALS).encode()
             self._send(200, body, "application/json")
+        elif path == "/api/wan":
+            # Failover posture, republished for the wall Pi, which cannot reach pve2 by design.
+            # 404 rather than an empty object when this cycle produced nothing: an absent posture
+            # must reach the Pi as "could not fetch" and become UNKNOWN there, and a 200 carrying
+            # {} would instead be a well-formed envelope asserting nothing, which the consumer
+            # would have to special-case. Only a real posture is ever served with a 200.
+            with LOCK:
+                fo = ((STATE.get("opnsense") or {}).get("failover"))
+            if isinstance(fo, dict) and isinstance(fo.get("armed"), bool):
+                self._send(200, json.dumps(fo).encode(), "application/json")
+            else:
+                self._send(404, b'{"error":"no wan posture this cycle"}', "application/json")
         elif path == "/api/incident":
             # A SEPARATE endpoint, deliberately. Overloading /api/state with an unrelated schema
             # would make every existing consumer's contract depend on this feature shipping
