@@ -396,9 +396,63 @@ def opnsense_stats():
             out[wk]["gw"] = g.get("status_translated") or g.get("status")   # Online / Offline
             out[wk]["lat"] = numish(g.get("delay"))
             out[wk]["loss"] = numish(g.get("loss"))
+            # dpinger's monitor TARGET, kept distinct from the gateway address. A gateway monitoring
+            # its own next-hop only proves the link is up; monitoring an external host proves the
+            # internet beyond the ISP is reachable. WAN_GW was next-hop-monitored until 2026-09-10,
+            # which is why the wall must be able to tell those two apart (see nfmWanPosture).
+            out[wk]["monitor"] = (g.get("monitor") or "") or None
+            out[wk]["gw_addr"] = (g.get("address") or "") or None
     except Exception:
         pass
     return out or None
+
+# One read-only probe on pve2 -> OPNsense guest agent. Returns the two facts the gateway-status API
+# cannot express, because this OPNsense build has no searchGatewayGroup endpoint and the firewall
+# rules need a privilege the dashboard key does not hold:
+#   GRP <name> <tiers>   a gateway group and how many members it ranks
+#   RULEGW <name>        an ENABLED filter rule that policy-routes through that group
+#   PF <netif>           which interface the live pf route-to currently resolves to
+# Armed is only true when a group of >=2 tiers is actually referenced by an enabled rule. A group
+# nobody routes through is not failover, which is exactly the state this estate sat in until
+# 2026-07-13, and a wallboard that called that READY would have been lying.
+_WAN_POLICY_CMD = r'''qm guest exec 100 --timeout 20 -- /bin/sh -c 'php -r "\$c=simplexml_load_file(\"/conf/config.xml\"); \$g=[]; foreach(\$c->gateways->gateway_group as \$x){ \$g[(string)\$x->name]=count(\$x->item); } \$r=[]; foreach(\$c->filter->rule as \$x){ if(isset(\$x->disabled)) continue; \$v=(string)\$x->gateway; if(\$v!==\"\") \$r[\$v]=1; } foreach(\$g as \$n=>\$t) echo \"GRP \$n \$t\n\"; foreach(array_keys(\$r) as \$n) echo \"RULEGW \$n\n\";"; pfctl -sr 2>/dev/null | grep route-to | grep Local_Nets | head -1 | sed -E "s/.*route-to \(([a-z0-9]+) .*/PF \1/"' '''
+
+#: pf netif -> dashboard WAN key. Mirrors opnsense_stats()'s idmap one layer down.
+_PF_NETIF = {"vtnet0": "wan1", "vtnet2": "wan2"}
+
+def wan_policy():
+    """Failover posture from the authoritative source. Returns None on ANY doubt - the renderer
+    treats a missing field as UNKNOWN and refuses to show DUAL-WAN READY, so a broken probe can
+    never manufacture a healthy-looking wall."""
+    out = sh(SSH + ["pve2", _WAN_POLICY_CMD], timeout=30)
+    try:
+        payload = json.loads(out)
+        if payload.get("exitcode") not in (0, None):
+            return None
+        text = payload.get("out-data") or ""
+    except Exception:
+        return None
+    groups, rule_gws, netif = {}, set(), None
+    for line in text.splitlines():
+        f = line.split()
+        if len(f) == 3 and f[0] == "GRP":
+            try: groups[f[1]] = int(f[2])
+            except Exception: pass
+        elif len(f) == 2 and f[0] == "RULEGW":
+            rule_gws.add(f[1])
+        elif len(f) == 2 and f[0] == "PF":
+            netif = f[1]
+    if not text.strip():
+        return None
+    armed = [n for n, tiers in groups.items() if tiers >= 2 and n in rule_gws]
+    res = {"armed": bool(armed)}
+    if armed:
+        res["group"] = armed[0]
+        res["tiers"] = groups[armed[0]]
+    if netif:
+        res["active"] = _PF_NETIF.get(netif)      # None for an unrecognised netif -> UNKNOWN
+        res["active_netif"] = netif
+    return res
 
 class _NoData(Exception):
     """Raised by a section that ran cleanly but has no data this cycle (MISSING/STALE, not ERROR)."""
@@ -477,6 +531,7 @@ def build_state(prev=None):
         "g_pw":   lambda: prom_series('nvidia_smi_power_draw_watts'),
         "phs":  pihole_stats,
         "opn":  opnsense_stats,
+        "wanp": wan_policy,
         "sw":   switch,
     }
     R = {}
@@ -558,7 +613,18 @@ def build_state(prev=None):
     section("slurm",      ["slurm"],        lambda: st.update({"slurm": R["slurm"]}) if R.get("slurm") else None,   lambda: bool(st.get("slurm")))
     section("k8s",        ["k8s"],          lambda: st.update({"k8s": R["k8s"]}) if R.get("k8s") else None,         lambda: bool(st.get("k8s")))
     section("pihole_api", ["pihole_stats"], lambda: st.update({"pihole_stats": R["phs"]}) if R.get("phs") else None, lambda: bool(st.get("pihole_stats")))
-    section("opnsense",   ["opnsense"],     lambda: st.update({"opnsense": R["opn"]}) if R.get("opn") else None,    lambda: bool(st.get("opnsense")))
+    # The failover posture rides on the opnsense panel but is collected separately, so a failed
+    # policy probe leaves `failover` ABSENT rather than false. Absent means UNKNOWN to the renderer;
+    # false would be a claim the probe never made.
+    def _opn():
+        o = R.get("opn")
+        if not o:
+            return None
+        wp = R.get("wanp")
+        if wp:
+            o = dict(o, failover=wp)
+        st.update({"opnsense": o})
+    section("opnsense",   ["opnsense"],     _opn,    lambda: bool(st.get("opnsense")))
     section("switch",     ["network"],      lambda: st.update({"network": R["sw"]}) if R.get("sw") else None,       lambda: bool(st.get("network")))
 
     # ---- derived global state (INV-001/002: never hardcode LIVE; mode reflects real freshness) ----

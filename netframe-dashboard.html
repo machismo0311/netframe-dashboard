@@ -547,14 +547,14 @@ function renderRail(){
      <div class="mono" style="font-size:9px;color:var(--dim);display:flex;justify-content:space-between;margin-top:2px">
        <span style="color:${c}">${w.gw||w.state}</span><span>${detail}</span></div></div>`;
   };
-  const w1on=o.wan1.gw?o.wan1.gw==='Online':(o.wan1.state==='UP');
-  const active=w1on?'WAN1':(o.wan2.gw==='Online'?'WAN2':'NONE');
-  const fc=w1on?'var(--green)':'var(--red)';
-  const fmsg=w1on?`▲ PRIMARY UP · ${active} ACTIVE`:`▼ PRIMARY DOWN · ${active} ACTIVE`;
+  const posture=nfmWanPosture(o);
+  const fc=posture.color;
+  const fmsg=posture.label;
   const opn=`<div class="panel">
     <div class="ph"><span class="glyph"></span><span class="t">OPNsense · Dual-WAN</span><span class="sub">${o.states.toLocaleString()} states</span></div>
     <div style="display:flex;flex-direction:column;gap:8px">${wanRow(o.wan1)}${wanRow(o.wan2)}</div>
     <div class="mono" style="font-size:9px;color:${fc};letter-spacing:.06em;margin-top:5px">${fmsg}</div>
+    <div class="mono" style="font-size:8px;color:var(--dim);letter-spacing:.04em;margin-top:1px">${posture.sub}</div>
   </div>`;
 
   const k=DATA.k8s;
@@ -750,6 +750,80 @@ function nfmSmartPills(smart){
        + '<span class="pill" style="color:'+(smart.fail?'var(--red)':'var(--dim)')+';border-color:currentColor">FAIL '+smart.fail+'</span>';
 }
 /* NFM-SMART-PILLS-END */
+
+/* NFM-WAN-POSTURE-BEGIN  (pure; offline-tested by tests/test_p6_wan.mjs - keep in sync)
+   Dual-WAN resilience is FIVE independent facts, and the old footer collapsed them into one:
+   `w1on = wan1.gw==='Online'` painted the whole card green whenever Spectrum answered. WAN2 was in
+   fact dead for 25 days (2026-08-15 to 2026-09-09) while this footer read "PRIMARY UP · WAN1 ACTIVE"
+   in green the entire time. Green there means "we are protected", and we were not.
+   The five dimensions, never inferred from one another:
+     1. wan1 gateway health        wan1.gw            Online/Offline
+     2. wan2 gateway health        wan2.gw            Online/Offline
+     3. failover policy armed      failover.armed     a >=2-tier group an ENABLED rule routes through
+     4. primary monitor quality    wan1.monitor       external target, not the gateway's own next-hop
+     5. active path                failover.active    live pf route-to, not guessed from 1 and 2
+   `state` (the INTERFACE being UP) is deliberately NOT a health fallback: WAN2 sat state=UP with
+   gw=Offline for weeks, so that fallback is the same conflation this function exists to remove.
+   Every unknown fails toward amber. An absent field is UNKNOWN, never false and never true, so a
+   broken probe degrades the wall honestly instead of inventing readiness. */
+function nfmWanPosture(o){
+  var R=function(state,label,sub,color,reason){
+    return {state:state,label:label,sub:sub,color:color,reason:reason};
+  };
+  var AMBER='var(--yellow)', GREEN='var(--green)', RED='var(--red)', DIM='var(--dim)';
+  if(!o || typeof o!=='object') return R('UNKNOWN','WAN STATE UNKNOWN','no snapshot',DIM,'no data');
+
+  /* health: gateway status only. null = UNKNOWN. */
+  var health=function(w){
+    if(!w || typeof w!=='object') return null;
+    if(w.gw==='Online') return true;
+    if(w.gw==='Offline') return false;
+    return null;
+  };
+  var w1=health(o.wan1), w2=health(o.wan2);
+
+  /* externally monitored: generic, not a hardcoded IP. A monitor equal to the gateway's own address
+     only proves the next hop answers; the internet beyond the ISP is unproven. */
+  var extMon=function(w){
+    if(!w || typeof w!=='object') return null;
+    if(typeof w.monitor!=='string' || !w.monitor) return (w.monitor===null||w.monitor===undefined)?null:false;
+    if(typeof w.gw_addr==='string' && w.gw_addr && w.monitor===w.gw_addr) return false;
+    return true;
+  };
+  var ext=extMon(o.wan1);
+
+  var fo=(o.failover && typeof o.failover==='object')?o.failover:null;
+  var armed=fo?(fo.armed===true?true:(fo.armed===false?false:null)):null;
+  var active=fo?(fo.active==='wan1'?'wan1':(fo.active==='wan2'?'wan2':null)):null;
+
+  if(w1===null) return R('UNKNOWN','WAN STATE UNKNOWN','primary health not reported',DIM,'wan1 health unknown');
+
+  if(w1===false){
+    if(w2===true && active==='wan2')
+      return R('FAILED_OVER','▼ FAILED OVER · WAN2 ACTIVE','FirstNet carrying traffic',AMBER,'wan1 down, pf on wan2');
+    if(w2===false)
+      return R('NO_INTERNET','▼ NO INTERNET','both WANs down',RED,'wan1 and wan2 down');
+    if(w2===true)
+      return R('PRIMARY_DOWN_PATH_UNKNOWN','▼ PRIMARY DOWN · PATH UNKNOWN','WAN2 healthy, active path unproven',RED,'wan1 down, active path unknown');
+    return R('UNKNOWN','▼ PRIMARY DOWN · STANDBY UNKNOWN','standby health not reported',RED,'wan1 down, wan2 unknown');
+  }
+
+  /* wan1 is up from here */
+  if(active==='wan2')
+    return R('FAILED_OVER','▼ FAILED OVER · WAN2 ACTIVE','FirstNet carrying traffic',AMBER,'pf on wan2 while wan1 up');
+  if(w2===false)
+    return R('NO_FAILOVER','▲ PRIMARY UP · NO FAILOVER','WAN2 FirstNet offline',AMBER,'wan2 down');
+  if(w2===null)
+    return R('UNKNOWN','▲ PRIMARY UP · STANDBY UNKNOWN','WAN2 health not reported',AMBER,'wan2 unknown');
+  if(armed===false)
+    return R('NOT_ARMED','▲ PRIMARY UP · FAILOVER NOT ARMED','no rule routes through a failover group',AMBER,'policy not armed');
+  if(ext===false)
+    return R('NOT_ARMED','▲ PRIMARY UP · FAILOVER NOT ARMED','primary monitors its own next-hop',AMBER,'primary not externally monitored');
+  if(armed===null || ext===null || active===null)
+    return R('UNKNOWN','▲ PRIMARY UP · FAILOVER STATE UNKNOWN','resilience not proven this cycle',AMBER,'armed/monitor/active unknown');
+  return R('READY','▲ DUAL-WAN READY','WAN1 Spectrum · WAN2 FirstNet standby',GREEN,'all five inputs healthy');
+}
+/* NFM-WAN-POSTURE-END */
 
 function nfmDisplayState(s, nowSec, bound){
   bound = (typeof bound==='number') ? bound : 90;   // ~2.4 refresh cycles (REFRESH=30s + work)
