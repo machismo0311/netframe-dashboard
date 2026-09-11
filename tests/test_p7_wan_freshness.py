@@ -73,12 +73,58 @@ chk("armed must be a real bool, not a truthy string",
 chk("armed=false is a VALID observation and stays fresh",
     S.wan_posture_fresh(posture(0, armed=False), now=NOW))
 
-# ---- the producing side stamps it -------------------------------------------------
+# ---- derivation from the netframe-monitor collection -------------------------------
+# The posture is no longer probed here. It is read from the collector's last_run.json, and its age
+# is the age of the RUN that produced it - last_run.json already carries its own clock in
+# `finished`, and two timestamps for one observation is two things to keep in sync and one of them
+# to be wrong.
+def last_run(age_s=10, **over):
+    met = {"source_ok": True, "armed": True, "group": "Failover", "tiers": 2,
+           "active_path": "wan1", "active_netif": "vtnet0", "reason": None}
+    met.update(over)
+    import datetime as _dt
+    fin = _dt.datetime.fromtimestamp(NOW - age_s, _dt.timezone.utc).isoformat()
+    return {"finished": fin, "worst": "OK",
+            "nodes": {"pve2": {"wan_failover": {"verdict": "OK", "rc": 0, "metrics": met}}}}
+
+import time as _t
+_real = _t.time
+_t.time = lambda: NOW                       # freeze the clock for the derivation tests
+try:
+    d = S.wan_policy(last_run())
+    chk("derives armed from the collector", d and d["armed"] is True)
+    chk("derives the group", d and d.get("group") == "Failover")
+    chk("derives the active path", d and d.get("active") == "wan1")
+    chk("observed_at comes from the run's own finished time",
+        d and abs(d["observed_at"] - (NOW - 10)) < 2)
+
+    chk("a stale collection yields NO posture at all",
+        S.wan_policy(last_run(age_s=40 * 60)) is None)
+    chk("one missed cycle still yields a posture",
+        S.wan_policy(last_run(age_s=15 * 60)) is not None)
+    chk("source_ok false -> no posture (the collector looked and could not see)",
+        S.wan_policy(last_run(source_ok=False)) is None)
+    chk("armed None (unobserved) -> no posture, never False",
+        S.wan_policy(last_run(armed=None)) is None)
+    chk("armed False IS a real observation and is returned",
+        (S.wan_policy(last_run(armed=False)) or {}).get("armed") is False)
+    chk("an unrecognised active_path is dropped, not guessed",
+        "active" not in (S.wan_policy(last_run(active_path="unknown")) or {}))
+
+    m = last_run(); del m["nodes"]["pve2"]["wan_failover"]
+    chk("check absent (collector too old) -> no posture", S.wan_policy(m) is None)
+    m2 = last_run(); del m2["finished"]
+    chk("a run that cannot say when it ran is not evidence", S.wan_policy(m2) is None)
+    chk("no monitor data at all -> no posture", S.wan_policy({}) is None)
+    chk("None monitor -> no posture", S.wan_policy(None) is None)
+finally:
+    _t.time = _real
+
+# ---- single authority: the Ares HTTP seam is GONE, not merely unused ---------------
 src = open(os.path.join(HERE, "..", "serve.py")).read()
-chk("the local probe stamps observed_at at observation time",
-    '"observed_at": time.time()' in src)
-chk("the republished endpoint re-checks freshness at serve time",
-    src.count("wan_posture_fresh(fo)") == 1)
+chk("no NFM_WAN_FEED_URL consumer remains", "NFM_WAN_FEED_URL" not in src)
+chk("no direct pve2 posture probe remains", "_WAN_POLICY_CMD" not in src)
+chk("posture is derived from the monitor collection", "def wan_policy(mon)" in src)
 
 print("----")
 print("WAN FRESHNESS: " + ("FAIL " + str(fails) if fails else "PASS"))

@@ -18,7 +18,7 @@ Still mock on the page (wired in later steps, each its own source):
 Dependency-free: Python 3 stdlib only. Runs on Ares today; same file runs on the Pi.
   Run:  python3 serve.py [port]     (default 8088)   ->  http://localhost:8088
 """
-import json, os, sys, time, threading, urllib.parse, urllib.request, urllib.error, ssl, base64, subprocess
+import datetime, json, os, sys, time, threading, urllib.parse, urllib.request, urllib.error, ssl, base64, subprocess
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -415,32 +415,42 @@ def opnsense_stats():
 # Armed is only true when a group of >=2 tiers is actually referenced by an enabled rule. A group
 # nobody routes through is not failover, which is exactly the state this estate sat in until
 # 2026-07-13, and a wallboard that called that READY would have been lying.
-_WAN_POLICY_CMD = r'''qm guest exec 100 --timeout 20 -- /bin/sh -c 'php -r "\$c=simplexml_load_file(\"/conf/config.xml\"); \$g=[]; foreach(\$c->gateways->gateway_group as \$x){ \$g[(string)\$x->name]=count(\$x->item); } \$r=[]; foreach(\$c->filter->rule as \$x){ if(isset(\$x->disabled)) continue; \$v=(string)\$x->gateway; if(\$v!==\"\") \$r[\$v]=1; } foreach(\$g as \$n=>\$t) echo \"GRP \$n \$t\n\"; foreach(array_keys(\$r) as \$n) echo \"RULEGW \$n\n\";"; pfctl -sr 2>/dev/null | grep route-to | grep Local_Nets | head -1 | sed -E "s/.*route-to \(([a-z0-9]+) .*/PF \1/"' '''
-
-#: pf netif -> dashboard WAN key. Mirrors opnsense_stats()'s idmap one layer down.
-_PF_NETIF = {"vtnet0": "wan1", "vtnet2": "wan2"}
-
-#: Same seam as the incident and proposal feeds: URL when configured (the wall Pi), else probe
-#: locally (Ares). The Pi reaches pve4/jarvis/quarkylab through forced commands and deliberately
-#: cannot reach pve2 at all, so it consumes this posture from Ares over HTTP rather than being
-#: given the estate access to derive it. One projection, computed once, on the host that can.
-WAN_POLICY_URL = (ENV.get("NFM_WAN_FEED_URL")
-                  or os.environ.get("NFM_WAN_FEED_URL") or "").strip()
-
 #: How old a failover posture may be before it stops counting as observed.
 #:
 #: Derived, not picked. The authoritative producer is the netframe-monitor collector, whose timer
-#: is OnUnitActiveSec=15min, so ONE missed cycle is ordinary (a slow SMART sweep, a brief reboot)
-#: and must not flip the wall amber, while TWO consecutive misses mean the producer is genuinely
-#: not running. 2 x 15min + 5min grace for collection time and clock skew.
+#: is OnUnitActiveSec=15min, so ONE missed cycle is ordinary (a slow SMART sweep on Randy, a brief
+#: reboot) and must not flip the wall amber, while TWO consecutive misses mean the producer is
+#: genuinely not running. 2 x 15min + 5min grace for collection time and clock skew.
 #:
-#: What a stale posture can and cannot cause. The posture carries policy facts (is a standby armed,
+#: What a stale posture can and cannot cause. The posture carries POLICY facts (is a standby armed,
 #: which path is programmed), NOT link health - wan1/wan2 health comes live from the OPNsense API
 #: every refresh. So a stale posture cannot manufacture a green wall during an outage: if WAN1
 #: drops, the fresh health inputs move the renderer to a non-green state regardless of what the
 #: posture says. The bounded residual risk is a posture that still claims armed=true for up to 35
 #: minutes after someone disarms the policy, which is config drift rather than an outage.
 WAN_POLICY_MAX_AGE = 35 * 60
+
+#: pf netif -> dashboard WAN key. Mirrors opnsense_stats()'s idmap one layer down.
+_PF_NETIF = {"vtnet0": "wan1", "vtnet2": "wan2"}
+
+
+def _run_finished_epoch(mon):
+    """Epoch of the collection run that produced `mon`, or None if it cannot be established.
+
+    last_run.json already carries the run's own clock in `finished`, so the posture does NOT get a
+    second timestamp of its own. Two timestamps for one observation is two things to keep in sync
+    and one of them to be wrong; the run that produced the fact is the fact's age."""
+    ts = (mon or {}).get("finished")
+    if not isinstance(ts, str):
+        return None
+    try:
+        d = datetime.datetime.fromisoformat(ts)
+    except Exception:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.timestamp()
+
 
 def wan_posture_fresh(doc, now=None, max_age=WAN_POLICY_MAX_AGE):
     """True only if `doc` is a well-formed posture envelope observed recently enough to believe.
@@ -458,52 +468,49 @@ def wan_posture_fresh(doc, now=None, max_age=WAN_POLICY_MAX_AGE):
     # A timestamp from the future is a broken or skewed producer, not a fresh observation.
     return -60 <= (now - ts) <= max_age
 
-def wan_policy():
-    """Failover posture from the authoritative source. Returns None on ANY doubt - the renderer
-    treats a missing field as UNKNOWN and refuses to show DUAL-WAN READY, so a broken probe can
-    never manufacture a healthy-looking wall."""
-    if WAN_POLICY_URL:
-        try:
-            with urllib.request.urlopen(WAN_POLICY_URL, timeout=6) as r:
-                doc = json.loads(r.read().decode("utf-8"))
-        except Exception:
-            return None
-        # Well-formed AND recently observed. A stale posture is dropped entirely rather than
-        # passed through, so the renderer sees an absent field and says UNKNOWN.
-        return doc if wan_posture_fresh(doc) else None
-    out = sh(SSH + ["pve2", _WAN_POLICY_CMD], timeout=30)
-    try:
-        payload = json.loads(out)
-        if payload.get("exitcode") not in (0, None):
-            return None
-        text = payload.get("out-data") or ""
-    except Exception:
-        return None
-    groups, rule_gws, netif = {}, set(), None
-    for line in text.splitlines():
-        f = line.split()
-        if len(f) == 3 and f[0] == "GRP":
-            try: groups[f[1]] = int(f[2])
-            except Exception: pass
-        elif len(f) == 2 and f[0] == "RULEGW":
-            rule_gws.add(f[1])
-        elif len(f) == 2 and f[0] == "PF":
-            netif = f[1]
-    if not text.strip():
-        return None
-    armed = [n for n, tiers in groups.items() if tiers >= 2 and n in rule_gws]
-    # Stamped at the moment of a SUCCESSFUL observation, so a downstream consumer can tell a fresh
-    # posture from one that merely survived in a cache. Only set here, on the host that actually
-    # looked - a republisher must pass it through unchanged rather than restamp it, or every
-    # consumer would read the relay's clock instead of the observation's.
-    res = {"armed": bool(armed), "observed_at": time.time()}
+
+def wan_policy(mon):
+    """Failover posture, read from the netframe-monitor collection this snapshot already fetched.
+
+    ONE authority. Until 2026-09-11 this was derived here, by SSHing to pve2 and running `qm guest
+    exec` against the firewall - which worked on Ares and was impossible on the wall Pi, so the Pi
+    consumed it from Ares over HTTP instead. That left the wall's most important claim depending on
+    a second host being up, and it meant two code paths could disagree about the same fact.
+
+    The collector already reaches pve2 as a low-privilege user, and the Pi already reads its
+    output over a forced command restricted to exactly that one file. So the posture rides the
+    path that existed: derived once on the node that legitimately can, published through
+    last_run.json, and read here by both instances identically. There is no fallback to the old
+    seam on purpose - a fallback would let a dead producer be masked by a stale alternate truth,
+    and the wall would keep asserting protection nobody had verified.
+
+    Returns None on ANY doubt. The renderer treats a missing field as UNKNOWN and refuses to show
+    DUAL-WAN READY, so a broken producer degrades the wall honestly instead of inventing readiness."""
+    m = ((mon or {}).get("nodes") or {}).get("pve2") or {}
+    c = m.get("wan_failover")
+    if not isinstance(c, dict):
+        return None                                   # check absent: collector too old, or not run
+    met = c.get("metrics") or {}
+    if met.get("source_ok") is not True:
+        return None                                   # the collector looked and could not see
+    armed = met.get("armed")
+    if not isinstance(armed, bool):
+        return None                                   # tri-state None means UNOBSERVED, never False
+    when = _run_finished_epoch(mon)
+    if when is None:
+        return None                                   # a run that cannot say when it ran is not evidence
+    res = {"armed": armed, "observed_at": when}
     if armed:
-        res["group"] = armed[0]
-        res["tiers"] = groups[armed[0]]
-    if netif:
-        res["active"] = _PF_NETIF.get(netif)      # None for an unrecognised netif -> UNKNOWN
-        res["active_netif"] = netif
-    return res
+        if met.get("group"):
+            res["group"] = met["group"]
+        if isinstance(met.get("tiers"), int):
+            res["tiers"] = met["tiers"]
+    path = met.get("active_path")
+    if path in _PF_NETIF.values():
+        res["active"] = path
+        if met.get("active_netif"):
+            res["active_netif"] = met["active_netif"]
+    return res if wan_posture_fresh(res) else None
 
 class _NoData(Exception):
     """Raised by a section that ran cleanly but has no data this cycle (MISSING/STALE, not ERROR)."""
@@ -582,7 +589,6 @@ def build_state(prev=None):
         "g_pw":   lambda: prom_series('nvidia_smi_power_draw_watts'),
         "phs":  pihole_stats,
         "opn":  opnsense_stats,
-        "wanp": wan_policy,
         "sw":   switch,
     }
     R = {}
@@ -671,7 +677,7 @@ def build_state(prev=None):
         o = R.get("opn")
         if not o:
             return None
-        wp = R.get("wanp")
+        wp = wan_policy(R.get("M"))
         if wp:
             o = dict(o, failover=wp)
         st.update({"opnsense": o})
@@ -869,11 +875,17 @@ class H(BaseHTTPRequestHandler):
                 body = json.dumps(PROPOSALS).encode()
             self._send(200, body, "application/json")
         elif path == "/api/wan":
-            # Failover posture, republished for the wall Pi, which cannot reach pve2 by design.
-            # 404 rather than an empty object when this cycle produced nothing: an absent posture
-            # must reach the Pi as "could not fetch" and become UNKNOWN there, and a 200 carrying
-            # {} would instead be a well-formed envelope asserting nothing, which the consumer
-            # would have to special-case. Only a real posture is ever served with a 200.
+            # Read-only VIEW of this instance's failover posture. It is no longer a transport:
+            # both dashboards now derive the posture from the netframe-monitor collection they
+            # each already fetch, so nothing consumes this to learn the fact. It is kept because
+            # it answers "what does THIS instance currently believe", which is what you want when
+            # the two wall displays are being compared, and it cannot become a second authority:
+            # it can only report what the single producer already said.
+            #
+            # 404 rather than an empty object when this cycle produced nothing. A 200 carrying {}
+            # is a well-formed envelope asserting nothing, which every consumer then has to
+            # special-case; an absent posture should read as "could not fetch". Only a real
+            # posture is ever served with a 200.
             with LOCK:
                 fo = ((STATE.get("opnsense") or {}).get("failover"))
             # Freshness is re-checked at SERVE time, not just at collection time. build_state carries
