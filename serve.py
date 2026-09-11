@@ -427,6 +427,37 @@ _PF_NETIF = {"vtnet0": "wan1", "vtnet2": "wan2"}
 WAN_POLICY_URL = (ENV.get("NFM_WAN_FEED_URL")
                   or os.environ.get("NFM_WAN_FEED_URL") or "").strip()
 
+#: How old a failover posture may be before it stops counting as observed.
+#:
+#: Derived, not picked. The authoritative producer is the netframe-monitor collector, whose timer
+#: is OnUnitActiveSec=15min, so ONE missed cycle is ordinary (a slow SMART sweep, a brief reboot)
+#: and must not flip the wall amber, while TWO consecutive misses mean the producer is genuinely
+#: not running. 2 x 15min + 5min grace for collection time and clock skew.
+#:
+#: What a stale posture can and cannot cause. The posture carries policy facts (is a standby armed,
+#: which path is programmed), NOT link health - wan1/wan2 health comes live from the OPNsense API
+#: every refresh. So a stale posture cannot manufacture a green wall during an outage: if WAN1
+#: drops, the fresh health inputs move the renderer to a non-green state regardless of what the
+#: posture says. The bounded residual risk is a posture that still claims armed=true for up to 35
+#: minutes after someone disarms the policy, which is config drift rather than an outage.
+WAN_POLICY_MAX_AGE = 35 * 60
+
+def wan_posture_fresh(doc, now=None, max_age=WAN_POLICY_MAX_AGE):
+    """True only if `doc` is a well-formed posture envelope observed recently enough to believe.
+
+    Pure, so the staleness rule is testable without a producer, a socket or a clock. An envelope
+    with no observed_at is REJECTED rather than trusted: a producer that cannot say when it looked
+    has not established that it looked at all, and this is the exact shape of the 25-day regression
+    - a fact that was absent being rendered as a fact that was fine."""
+    if not isinstance(doc, dict) or not isinstance(doc.get("armed"), bool):
+        return False
+    ts = doc.get("observed_at")
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return False
+    now = time.time() if now is None else now
+    # A timestamp from the future is a broken or skewed producer, not a fresh observation.
+    return -60 <= (now - ts) <= max_age
+
 def wan_policy():
     """Failover posture from the authoritative source. Returns None on ANY doubt - the renderer
     treats a missing field as UNKNOWN and refuses to show DUAL-WAN READY, so a broken probe can
@@ -437,10 +468,9 @@ def wan_policy():
                 doc = json.loads(r.read().decode("utf-8"))
         except Exception:
             return None
-        # Only a well-formed posture envelope is accepted. Anything else is UNKNOWN, never a guess.
-        if not isinstance(doc, dict) or not isinstance(doc.get("armed"), bool):
-            return None
-        return doc
+        # Well-formed AND recently observed. A stale posture is dropped entirely rather than
+        # passed through, so the renderer sees an absent field and says UNKNOWN.
+        return doc if wan_posture_fresh(doc) else None
     out = sh(SSH + ["pve2", _WAN_POLICY_CMD], timeout=30)
     try:
         payload = json.loads(out)
@@ -462,7 +492,11 @@ def wan_policy():
     if not text.strip():
         return None
     armed = [n for n, tiers in groups.items() if tiers >= 2 and n in rule_gws]
-    res = {"armed": bool(armed)}
+    # Stamped at the moment of a SUCCESSFUL observation, so a downstream consumer can tell a fresh
+    # posture from one that merely survived in a cache. Only set here, on the host that actually
+    # looked - a republisher must pass it through unchanged rather than restamp it, or every
+    # consumer would read the relay's clock instead of the observation's.
+    res = {"armed": bool(armed), "observed_at": time.time()}
     if armed:
         res["group"] = armed[0]
         res["tiers"] = groups[armed[0]]
@@ -842,10 +876,13 @@ class H(BaseHTTPRequestHandler):
             # would have to special-case. Only a real posture is ever served with a 200.
             with LOCK:
                 fo = ((STATE.get("opnsense") or {}).get("failover"))
-            if isinstance(fo, dict) and isinstance(fo.get("armed"), bool):
+            # Freshness is re-checked at SERVE time, not just at collection time. build_state carries
+            # a last-good snapshot forward on a hiccup, which is right for a panel that shows its own
+            # age, and wrong for a posture republished to another host that cannot see that age.
+            if wan_posture_fresh(fo):
                 self._send(200, json.dumps(fo).encode(), "application/json")
             else:
-                self._send(404, b'{"error":"no wan posture this cycle"}', "application/json")
+                self._send(404, b'{"error":"no fresh wan posture this cycle"}', "application/json")
         elif path == "/api/incident":
             # A SEPARATE endpoint, deliberately. Overloading /api/state with an unrelated schema
             # would make every existing consumer's contract depend on this feature shipping
