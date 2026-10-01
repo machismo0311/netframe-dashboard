@@ -448,15 +448,25 @@ function nfmLamps(ds, m, conds, incFeed, propFeed, nowSec){
   else if(ds.state==='UNKNOWN') conf=L('conf','TELEMETRY CONFIDENCE','y','UNKNOWN',ds.reason);
   else if(ds.state==='DEGRADED') conf=L('conf','TELEMETRY CONFIDENCE','y','PARTIAL',fresh.length+'/'+pn.length+' sources current · '
         +ds.stale.map(n=>n+' '+nfmAgeText(nfmPanelAge(m,n,nowSec))).join(' · '));
-  else conf=L('conf','TELEMETRY CONFIDENCE','g','CURRENT','all '+pn.length+' sources fresh'
-        +(m.collector && typeof m.collector.finished_at==='number' ? ' · collector ran '+nfmAgeText(nowSec-m.collector.finished_at)+' ago' : ''));
+  else {
+    /* Every panel FRESH is not enough: this page also needs the backend to REPORT the collector's own
+       run time and the UPS utility status. A snapshot without them (an older serve.py, or a page that
+       reloaded before its backend was replaced) has not shown that the collector is current or that
+       the UPS is on line, so the wall must not read CURRENT / NO FAULTS on it. */
+    const missing=[];
+    if(!(m.collector && typeof m.collector.finished_at==='number')) missing.push('collector run time');
+    if(!m.upsStatus) missing.push('UPS utility status');
+    conf = missing.length
+      ? L('conf','TELEMETRY CONFIDENCE','y','PARTIAL','not reported by backend: '+missing.join(' · '))
+      : L('conf','TELEMETRY CONFIDENCE','g','CURRENT','all '+pn.length+' sources fresh · collector ran '+nfmAgeText(nowSec-m.collector.finished_at)+' ago');
+  }
   const current=(ds.state==='LIVE' || ds.state==='DEGRADED');
   let infra;
   if(!current) infra=L('infra','INFRASTRUCTURE','u','UNKNOWN', crit.length ? 'last known: '+crit.length+' critical · '+names(crit) : 'no current data');
   else if(crit.length) infra=L('infra','INFRASTRUCTURE','r','CRITICAL',crit.length+' critical: '+names(crit)+(warn.length?' · +'+warn.length+' warning':''));
   else if(warn.length) infra=L('infra','INFRASTRUCTURE','y','DEGRADED',warn.length+' warning: '+names(warn));
   else if(conf.sev==='g') infra=L('infra','INFRASTRUCTURE','g','NO FAULTS','in measured domains · some domains not measured');
-  else infra=L('infra','INFRASTRUCTURE','u','NO FAULTS SEEN',(pn.length-fresh.length)+' source(s) not current · cannot confirm');
+  else infra=L('infra','INFRASTRUCTURE','u','NO FAULTS SEEN','cannot confirm · '+conf.why);
   let inc;
   if(incFeed===undefined) inc=L('inc','INCIDENT','u','AWAITING','incident feed not read yet');
   else { const d=nfmIncidentState(incFeed, nowSec);

@@ -222,6 +222,19 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   chk('H: proposal +30 s skew is tolerated', F.nfmProposalState(props(p => { p.generated_at = iso(NOW + 30); }), NOW).status === 'OK');
 }
 
+/* ---------------------------------------------------------------- L: mixed versions */
+{
+  /* exactly what the CURRENT production backend (58bb84d) sends: no collector, no ups_status */
+  const oldBackend = view(snap(s => { delete s.collector; delete s.ups_status; }));
+  chk('L: new page on an old backend is NOT "CURRENT"', lamp(oldBackend, 'conf').sev === 'y' && lamp(oldBackend, 'conf').value === 'PARTIAL', lamp(oldBackend, 'conf'));
+  chk('L: ...it names what the backend does not report', /collector run time/.test(lamp(oldBackend, 'conf').why) && /UPS utility status/.test(lamp(oldBackend, 'conf').why));
+  chk('L: ...and INFRASTRUCTURE cannot read green "NO FAULTS"', lamp(oldBackend, 'infra').sev !== 'g', lamp(oldBackend, 'infra'));
+  const noUps = view(snap(s => { delete s.ups_status; }));
+  chk('L: a missing UPS status alone also blocks green', lamp(noUps, 'infra').sev !== 'g' && /UPS utility status/.test(lamp(noUps, 'conf').why));
+  const full = view(snap());
+  chk('L: the new backend shape still reads CURRENT / NO FAULTS', lamp(full, 'conf').value === 'CURRENT' && lamp(full, 'infra').value === 'NO FAULTS');
+}
+
 /* ---------------------------------------------------------------- K: intel detail rows */
 {
   const K = new Function(blk('NFM-INTEL-FIT') + '\n return {nfmIntelHideable};')();

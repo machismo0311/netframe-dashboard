@@ -78,7 +78,25 @@ def incident(now):
     return f
 
 
+def replayed(now):
+    """scenario `replay`: a REAL captured /api/state (sanitized), shifted in time so that it was
+    generated 4 s ago. Every timestamp moves by the same delta, so relative ages are preserved."""
+    s = json.load(open(os.environ["NFM_REPLAY_STATE"], encoding="utf-8"))
+    d = (now - 4) - s["ts"]
+    s["ts"] += d
+    for p in (s.get("panels") or {}).values():
+        for k in ("fresh_at", "observed_at"):
+            if isinstance(p.get(k), (int, float)): p[k] += d
+    fo = (s.get("opnsense") or {}).get("failover") or {}
+    if isinstance(fo.get("observed_at"), (int, float)): fo["observed_at"] += d
+    for k in ("finished_at", "started_at"):
+        if isinstance((s.get("collector") or {}).get(k), (int, float)): s["collector"][k] += d
+    return s
+
+
 def state(now):
+    if SCEN == "replay":
+        return replayed(now)
     CALLS["state"] += 1
     # stale: the backend keeps answering, but the last snapshot it built is 400 s old (and has a
     # carried UPS panel that was already 300 s stale when it was built: 700 s old at request time)
