@@ -112,11 +112,11 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   const v = view(snap(s => { s.nodes.pve3.st = 'r'; s.services.find(x => x.n === 'Vaultwarden').s = 'r'; s.k8s.ready = 3; }));
   const crit = v.conds.filter(c => c.sev === 'r');
   chk('C: three independent faults stay three entries (nothing merged)', crit.length === 3, crit.map(c => c.sys));
-  chk('C: each names its own system', ['pve3', 'Vaultwarden', 'RKE2 node'].every(n => crit.some(c => c.sys === n)));
+  chk('C: each names its own system', ['pve3', 'Vaultwarden', 'RKE2'].every(n => crit.some(c => c.sys === n)));
   chk('C: no entry infers a cause', v.conds.every(c => !/affect|caused by|because|root cause|due to/i.test(c.text)), v.conds.map(c => c.text));
   chk('C: faults without an authoritative cause say "cause not determined"', crit.every(c => /cause not determined/.test(c.text)));
   chk('C: a placement fact is labelled INVENTORY, not presented as a dependency', /INVENTORY CT102·pve3/.test(crit.find(c => c.sys === 'Vaultwarden').text));
-  chk('C: the lamp names every critical system', ['pve3', 'Vaultwarden', 'RKE2 node'].every(n => lamp(v, 'infra').why.includes(n)), lamp(v, 'infra').why);
+  chk('C: the lamp names every critical system', ['pve3', 'Vaultwarden', 'RKE2'].every(n => lamp(v, 'infra').why.includes(n)), lamp(v, 'infra').why);
   chk('C: worst first', v.conds.map(c => c.sev).join('') === v.conds.map(c => c.sev).sort((a, b) => 'ryu'.indexOf(a) - 'ryu'.indexOf(b)).join(''));
   const ups = (st, rt, batt) => F.nfmUpsState(F.nfmModel(snap(s => { s.ups_status.units.tripplite.status = st;
     if (rt !== undefined) s.ups.tripplite.runtime = rt; if (batt !== undefined) s.ups.tripplite.batt = batt; })), 'tripplite');
@@ -220,6 +220,38 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   const pf = F.nfmProposalState(props(p => { p.generated_at = iso(NOW + 600); }), NOW);
   chk('H: proposal feed from the future shows a banner and no current count', pf.show && pf.status !== 'OK' && pf.action === undefined && pf.banner === 'PROPOSAL FEED CLOCK INVALID', pf);
   chk('H: proposal +30 s skew is tolerated', F.nfmProposalState(props(p => { p.generated_at = iso(NOW + 30); }), NOW).status === 'OK');
+}
+
+/* ---------------------------------------------------------------- I: attention overflow */
+if (html.includes('NFM-ATTENTION-BEGIN')) {
+  const A = new Function(blk('NFM-ATTENTION') + '\n return {nfmAttentionPlan, nfmAttentionSummaryText};')();
+  const mk = (sev, dom, sys) => ({ sev, dom, sys, text: sys + ' text' });
+  const items = [];
+  ['pve2', 'pve3', 'pve4', 'pve5', 'Randy'].forEach(h => items.push(mk('r', 'NODE', h)));
+  ['Vaultwarden', 'Grafana', 'Headscale', 'Home Assistant', 'Proxmox Backup', 'Open WebUI', 'Wazuh SIEM'].forEach(s => items.push(mk('r', 'SERVICE', s)));
+  ['Backup Verify', 'Hardening Drift', 'Net Dead-man', 'Wazuh SIEM chip'].forEach(s => items.push(mk('r', 'INTEGRITY', s)));
+  items.push(mk('r', 'WAN', 'WAN'), mk('r', 'RKE2', 'RKE2 node'), mk('r', 'UPS', 'Tripp Lite'));
+  ['Journal Errors', 'Middle Atlantic'].forEach(s => items.push(mk('y', 'MISC', s)));
+  ['switch', 'slurm'].forEach(s => items.push(mk('u', 'TELEMETRY', s)));
+  const critNames = items.filter(i => i.sev === 'r').map(i => i.sys);
+  chk('I: (fixture) an overloaded list - ' + critNames.length + ' critical, 2 warning, 2 unknown', critNames.length === 19);
+  let allNamed = true, bounded = true, worstFirst = true;
+  for (let full = 0; full <= 8; full++) {
+    const p = A.nfmAttentionPlan(items, full), lines = A.nfmAttentionSummaryText(p.summary);
+    const text = p.rows.map(r => r.sys).join('|') + '|' + lines.map(l => l.text).join('|');
+    if (!critNames.every(n => text.includes(n))) allNamed = false;
+    if (lines.length > 3) bounded = false;
+    if (p.rows.some(r => r.sev !== 'r')) worstFirst = false;
+  }
+  chk('I: at every row budget, EVERY critical system is named (full line or summary)', allNamed);
+  chk('I: the summary is bounded (at most 3 lines: critical, warning, unknown)', bounded);
+  chk('I: full lines go to the worst conditions first', worstFirst);
+  const p3 = A.nfmAttentionPlan(items, 3), l3 = A.nfmAttentionSummaryText(p3.summary);
+  chk('I: the summary counts the remaining critical conditions', /\+16 MORE CRITICAL/.test(l3[0].text), l3[0].text);
+  chk('I: ...grouped by domain', /NODE: pve5, Randy/.test(l3[0].text) && /SERVICE: Vaultwarden/.test(l3[0].text), l3[0].text);
+  chk('I: remaining warnings are named, unknowns counted', /Journal Errors/.test(l3[1].text) && /\+2 NOT CURRENT/.test(l3[2].text));
+  const fit = A.nfmAttentionPlan(items.slice(0, 4), 5);
+  chk('I: a list that fits has no summary at all', fit.summary === null && fit.rows.length === 4);
 }
 
 console.log('----');
