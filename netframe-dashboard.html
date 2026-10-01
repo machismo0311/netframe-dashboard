@@ -4,7 +4,7 @@
 <style>
   :root{
     --base:#040d14; --panel:#0a1922; --panel2:#08141c; --ink:#cdeef2;
-    --dim:#5f8a93; --line:rgba(0,255,240,.16); --line2:rgba(0,255,240,.32);
+    --dim:#7fa9b2; --line:rgba(0,255,240,.16);   /* --dim lifted from #5f8a93: ~4.7:1 -> ~7:1 on --panel, same hue */ --line2:rgba(0,255,240,.32);
     --cyan:#00fff0; --green:#00ff9f; --yellow:#fcee0a; --red:#ff2a6d;
     --violet:#7b2fff; --orange:#ff7b00; --unk:#8b9ea3;
     --font-display:'Rajdhani','Oswald','Bahnschrift SemiCondensed','Segoe UI Semibold',sans-serif;
@@ -20,17 +20,22 @@
       radial-gradient(900px 600px at 10% 110%,rgba(123,47,255,.07),transparent 60%),var(--base);
     color:var(--ink);padding:14px 20px 30px;overflow:hidden;
     display:grid;grid-template-rows:62px 122px 54px minmax(0,1fr);row-gap:12px}
-  /* CRT scanlines + vignette + scan beam */
+  /* CRT scanlines + vignette + scan beam. All three are kept; tuned so they never fight the data:
+     scanlines .5 -> .32 (3 px lines no longer cut small glyph strokes) and the four lamps sit above them;
+     vignette .7/220 px -> .45/170 px so corner content (clock, inventory, rail corners) keeps contrast;
+     beam animates transform (compositor only) instead of top (layout + paint every frame), same look. */
   #stage::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:60;
     background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.16) 2px 3px);
-    mix-blend-mode:multiply;opacity:.5}
-  #stage::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:61;box-shadow:inset 0 0 220px rgba(0,0,0,.7)}
-  #beam{position:absolute;left:0;right:0;height:140px;top:-140px;z-index:62;pointer-events:none;
+    mix-blend-mode:multiply;opacity:.32}
+  #stage::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:61;box-shadow:inset 0 0 170px rgba(0,0,0,.45)}
+  #beam{position:absolute;left:0;right:0;top:0;height:140px;z-index:62;pointer-events:none;will-change:transform;
     background:linear-gradient(to bottom,transparent,rgba(0,255,240,.05) 60%,rgba(0,255,240,.10));
-    border-bottom:1px solid rgba(0,255,240,.22);animation:sweep 7s linear infinite}
-  @keyframes sweep{0%{top:-140px}100%{top:1080px}}
-  /* the beam is decoration gated by liveness: full while LIVE, faint while PARTIAL, gone otherwise */
-  .beam-partial #beam{opacity:.5;animation-duration:14s}
+    border-bottom:1px solid rgba(0,255,240,.22);animation:sweep 8s linear infinite}
+  @keyframes sweep{0%{transform:translateY(-140px)}100%{transform:translateY(1080px)}}
+  #lamps{position:relative;z-index:65}
+  /* the beam is decoration gated by liveness: full while LIVE, faint while PARTIAL, gone otherwise.
+     It is always cyan - decoration never borrows a warning colour. */
+  .beam-partial #beam{opacity:.5;animation-duration:16s}
   .beam-off #beam{display:none}
   @media (prefers-reduced-motion:reduce){#beam{display:none}.dot,.hb{animation:none!important}}
 
@@ -92,9 +97,11 @@
 
   /* ---- status dots ---- */
   .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
-  .dot.g{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2.4s infinite}
-  .dot.y{background:var(--yellow);box-shadow:0 0 8px var(--yellow);animation:pulse 1.3s infinite}
-  .dot.r{background:var(--red);box-shadow:0 0 10px var(--red);animation:pulse .9s infinite}
+  /* motion is reserved for attention: healthy = steady neon glow; amber = slow pulse; red = fast pulse.
+     (Healthy dots used to blink to 35 % every 2.4 s, competing with real warnings.) */
+  .dot.g{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .dot.y{background:var(--yellow);box-shadow:0 0 8px var(--yellow);animation:pulse 1.6s infinite}
+  .dot.r{background:var(--red);box-shadow:0 0 10px var(--red);animation:pulse .8s infinite}
   .dot.u{background:transparent;border:2px dashed var(--unk)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
@@ -124,8 +131,9 @@
   .node .nh{display:flex;align-items:center;gap:7px}
   .node .hn{font-size:21px;font-weight:700;letter-spacing:.03em;color:#eafcff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .role{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;padding:1px 5px;align-self:flex-start;border:1px solid var(--line2);color:var(--cyan);text-transform:uppercase;white-space:nowrap}
-  .role.st{color:var(--violet);border-color:rgba(123,47,255,.5)}
-  .role.stor{color:var(--orange);border-color:rgba(255,123,0,.45)}
+  /* decorative accents use violet/cyan only: orange sits next to warning amber and must not read as one */
+  .role.st{color:#a77bff;border-color:rgba(123,47,255,.6)}
+  .role.stor{color:#b98cff;border-color:rgba(123,47,255,.6)}
   .bar{--c:var(--cyan)}
   .bar .bl{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:13px;color:var(--dim)}
   .bar .bl b{color:var(--ink);font-weight:400}
@@ -133,7 +141,7 @@
   .bar .fill{height:100%;background:var(--c);box-shadow:0 0 8px var(--c);transition:width .8s ease}
   .node .foot{border-top:1px solid var(--line);padding-top:4px;margin-top:auto;font-family:var(--font-mono);font-size:13px;color:var(--cyan);
     display:flex;justify-content:space-between;gap:6px;white-space:nowrap;overflow:hidden}
-  .node .foot .tdot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--orange);box-shadow:0 0 6px var(--orange);margin-right:4px;vertical-align:middle}
+  .node .foot .tdot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 6px var(--cyan);margin-right:4px;vertical-align:middle}
   .node .down{margin:auto 0;font-family:var(--font-mono);font-size:14px;color:var(--red);letter-spacing:.08em;text-align:center}
   .node .nodata{margin:auto 0;font-family:var(--font-mono);font-size:14px;color:var(--unk);letter-spacing:.08em;text-align:center}
 
