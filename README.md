@@ -38,20 +38,21 @@ Two files do all the work:
 
 | File | Role |
 |---|---|
-| **`serve.py`** | A ~400-line **stdlib-only** HTTP server. Serves the page, and every ~5 s a background thread rebuilds one JSON snapshot (`/api/state`) by querying all your sources concurrently. Serves last-good data if a source hiccups, so the wall never blanks. |
+| **`serve.py`** | A **stdlib-only** HTTP server. Serves the page, and a background thread rebuilds one JSON snapshot (`/api/state`) by querying all your sources concurrently: it sleeps `REFRESH` = 30 s between builds, so with build time a new snapshot lands roughly every 40 s. A source that fails is carried forward per panel as `STALE` with the age of its last real observation (never re-aged, never relabelled fresh). |
 | **`/api/proposals`** | A **third** separate endpoint carrying `netframe-proposal-dashboard-feed/v2` - which incident proposals Jarvis has prepared and is waiting on an owner for, from either source. v2 carries a typed `source_kind` (prometheus/wazuh) and `source_condition` (FIRING/CLEARED/DETECTION_RECORDED): a Wazuh archive event happened once and does not later clear, so it is never rendered as a firing or cleared alert. Awareness only: the wall has no accept, dismiss, publish or select path, and a count is shown only when the intake collector could actually see. Point a consumer at another host's feed with `NFM_PROPOSAL_FEED_URL`; leave it unset to read the local projection (`NFM_PROPOSAL_FEED_FILE`). Neither is a secret. |
 | **`/api/incident`** | A **second, separate** endpoint carrying `netframe-live-dashboard-feed/v1` - the live incident projection NetFRAME produces. The dashboard never collects incident evidence: one producer on Ares runs Live Incident Mode and writes the feed, this endpoint moves the bytes, and the panel renders them. Acquisition runs on its own thread with its own lock, so an unreachable feed degrades one strip and never `/api/state`. Point a consumer at another host's feed with `NFM_INCIDENT_FEED_URL`; leave it unset to read the local producer's file (`NFM_INCIDENT_FEED_FILE`). Neither is a secret. |
-| **`netframe-dashboard.html`** | The entire UI in one self-contained file (inline CSS + JS, no build step, no external requests). Polls `/api/state`; falls back to animated mock data if the aggregator is unreachable, so the file also works opened directly. |
+| **`netframe-dashboard.html`** | The entire UI in one self-contained file (inline CSS + JS, no build step, no external requests). Polls `/api/state`, `/api/incident` and `/api/proposals` independently. **It never simulates a value:** if the aggregator is unreachable it keeps the last real sample, dimmed under a `NO CARRIER` flag with an advancing age. Sample data exists only behind `?demo=1`, under a full-screen DEMO watermark. |
 
 **Design goals:** zero dependencies (Python 3 stdlib + a browser), zero build step,
 no secrets in the code, safe-by-default (read-only everywhere), and a display that
-survives reboots and source outages.
+**says when its information is invalid** instead of looking healthy.
 
 **Features**
-- Live node CPU/RAM/disk, GPU power/temp, UPS, Pi-hole, dual-WAN, SLURM, Kubernetes, switch, and a "monitor integrity" strip
-- A **severity-aware header** (`NOMINAL` / `DEGRADED · N` / `CRITICAL · N`) computed from real state
-- **Reactive flash** — tiles pulse red the instant something goes critical
-- **Trend sparklines** behind each KPI (rolling client-side history)
+- Live node CPU/RAM/disk, GPU power/temp, UPS (incl. on-line / on-battery), Pi-hole, dual-WAN posture, SLURM, Kubernetes, switch, and a "monitor integrity" strip
+- **Four status lamps** with four sources — INFRASTRUCTURE, TELEMETRY CONFIDENCE, INCIDENT, OWNER REVIEW · SECURITY (§7.3)
+- A **NEEDS ATTENTION** list: one line per independent condition, worst first, never an inferred cause
+- **Reactive flash** — tiles pulse red the instant something goes critical; healthy equipment glows steady
+- Cyberpunk HUD styling (scanlines, scan beam, neon glow) tuned so decoration never imitates a warning
 - Pixel-locked 1920×1080, auto-scaled to any screen
 
 ---
@@ -66,7 +67,7 @@ survives reboots and source outages.
                         │        │  http://localhost:8088          │
                         │        ▼                                 │
                         │  serve.py  (systemd, :8088)              │
-                        │        │  builds /api/state every ~5s    │
+                        │        │  builds /api/state every ~40s   │
                         └────────┼─────────────────────────────────┘
                                  │  (read-only, over your LAN)
         ┌────────────────────────┼──────────────────────────────────┐
@@ -86,12 +87,16 @@ credential-holding device on a wall (see [§10](#10-least-privilege-access-recom
 ## 3. How the pieces talk (data flow)
 
 1. **Browser** loads `netframe-dashboard.html` from `serve.py`.
-2. Every 3 s the page does `fetch('/api/state')`.
+2. Every 3 s the page does `fetch('/api/state')` (one request in flight at a time, 8 s
+   timeout); `/api/incident` and `/api/proposals` are polled every 5 s on their own.
 3. **`serve.py`** returns the latest cached snapshot (rebuilt by a background thread
-   every ~5 s, so a fetch never waits on your infrastructure).
-4. The page **merges** the snapshot into its in-memory `DATA` object and re-renders.
-5. If the fetch fails (aggregator down, or the file opened standalone), the page
-   **falls back to mock data** and shows `OFFLINE` — it never goes blank.
+   about every 40 s, so a fetch never waits on your infrastructure).
+4. The page builds a model **only from the snapshot**: anything it does not carry is
+   `null` and renders as `—` / NOT MEASURED. A response from an older request is
+   dropped; a snapshot whose `ts` did not move forward is not a new sample.
+5. If the fetch fails twice (or nothing good arrives for 10 s), the page shows
+   `NO CARRIER` over the last real values, dimmed, with their age still counting.
+   Before the first sample it shows `ACQUIRING SIGNAL`. It never invents numbers.
 
 The snapshot is intentionally flat and per-panel, e.g.:
 ```json
@@ -113,7 +118,7 @@ The snapshot is intentionally flat and per-panel, e.g.:
 - **Python 3.9+** on whatever runs `serve.py` (the Pi, or any always-on box). Stdlib only.
 - A modern browser for the display (Chromium on the Pi).
 - Whatever data sources you want to show. **None are mandatory** — `serve.py` skips a
-  source that isn't configured, and the panel shows mock until it exists.
+  source that isn't configured, and the panel reads NOT REPORTED until it exists.
 - For the sources this repo wires by default: SSH access to the relevant hosts (key-based),
   a Prometheus reachable somehow, and read-only API creds for Pi-hole/OPNsense.
 
@@ -127,9 +132,10 @@ python3 serve.py 8088
 # open http://localhost:8088
 ```
 
-With nothing configured it serves the page and every panel runs on **mock data** (the
-badge reads `OFFLINE`). That's your starting point — now wire real sources one at a time
-in [§8](#8-wiring-your-data-sources), watching each panel flip to live.
+With nothing configured it serves the page and every panel reads `NOT REPORTED` /
+`NO DATA` (sources are `MISSING`). Open `http://localhost:8088/?demo=1` to see a
+watermarked sample layout. Then wire real sources one at a time in
+[§8](#8-wiring-your-data-sources), watching each panel flip to live.
 
 ---
 
@@ -194,7 +200,7 @@ def build_state():
     return st
 ```
 Key ideas: **fan out** all fetches with a thread pool (turns ~15 s of serial SSH into
-~5 s), and a source that throws simply becomes `None` and is skipped — one broken source
+a few seconds), and a source that throws simply becomes `None` and is skipped — one broken source
 can never break the snapshot.
 
 ### 6.4 A background refresher + a dead-simple HTTP handler
@@ -203,10 +209,9 @@ can never break the snapshot.
 def refresher():
     global STATE
     while True:
-        s = build_state()
-        if s.get("ok"):
-            with LOCK: STATE = s          # only replace on a usable build → serves last-good
-        time.sleep(REFRESH)
+        s = build_state(prev=STATE)       # each panel FRESH, or carried STALE with its true age
+        with LOCK: STATE = s              # published every cycle, so ts always advances
+        time.sleep(REFRESH)               # 30 s
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -295,58 +300,101 @@ def switch():
 One file, three parts: **`<style>`** (theme + layout), **markup** (empty containers),
 **`<script>`** (a `DATA` object + `render*()` functions + a poll loop).
 
-### 7.1 The data model
-Every panel reads from one object; there is no framework. Phase-2 wiring = swap the
-object's source from mock to `fetch`, the render code never changes:
+### 7.1 The data model: the snapshot or nothing
+There is no framework and no seeded data. Every render reads one model built **only**
+from the latest snapshot (`nfmModel`, pure). Fixed facts (host roles, RAM capacity, UPS
+names, drive bays) live in a separate `NFM_INV` block and are always rendered labelled
+**INVENTORY**, so a declared number can never pass for a measurement.
 ```js
-const DATA = {
-  nodes:[{host:'HV1', cpu:12, ramU:41, disk:37, st:'g', gpu:null}, ...],
-  ups:[...], services:[...], integrity:[...], opnsense:{...}, gpus:[...], ...
-};
+function nfmModel(s){ /* nodes, ups, upsStatus, integrity, services, opn, k8s, ... */ }
+// absent field  -> null  -> "—" / NOT MEASURED     (never 0, never a previous mock)
+// unknown state -> 'u'   -> dashed grey dot "?"    (never green)
 ```
 
-### 7.2 Render + poll + graceful fallback
+### 7.2 Polling, ordering and liveness
 ```js
-function renderAll(){ renderSummary(); renderNodes(); renderIntegrity(); renderRail();
-                      renderSlurm(); renderGpu(); renderBottom(); updateHeader(); }
-
-async function pull(){
-  try {
-    const s = await (await fetch('/api/state',{cache:'no-store'})).json();
-    if (!s.ok) throw 0;
-    applyLive(s); updateMode(true, Date.now()/1000 - s.ts); renderAll();   // LIVE
-  } catch { updateMode(false); mockTick(); }                                // OFFLINE → mock
+async function pull(){                     // one request in flight; 8 s AbortController
+  const seq = ++LINK.seq; /* ... */
+  const ev = LINK.tracker.accept(seq, s.ts);   // DROP | NEW | SAME | REGRESSED | NO_TS
+  if (ev === 'DROP') return;                   // an older request answered late
+  MODEL = nfmModel(s);
 }
-setInterval(pull, 3000);
 ```
-`applyLive(s)` merges snapshot fields into `DATA` (with `null` guards so a briefly-missing
-value keeps its last reading). `mockTick()` jitters the mock values so a standalone file
-still looks alive.
+- **Ordering.** A response is applied only if its request is newer than the last applied
+  one; `/api/incident` and `/api/proposals` each have their own gate.
+- **NEW vs SAME.** A snapshot is a new sample only when `ts` moved forward. A `ts` that
+  moved *backwards* on a newer request (backend restart or clock correction) is applied as
+  `REGRESSED`; the tracker re-bases and resumes on the next forward step.
+- **Link state** (`nfmLinkState`): `AWAITING` before the first sample, `OFFLINE` after 2
+  consecutive failures or 10 s without a good answer, otherwise the snapshot's own
+  display state (`nfmDisplayState`: STALE if older than 90 s, UNKNOWN if more than 60 s in
+  the future). A 1 s tick keeps every age advancing even when no response arrives.
+- **Decoration is not proof.** The heartbeat in the uplink badge blips once per NEW
+  snapshot (green when LIVE, amber when PARTIAL) and never for a repeated or stale one.
+  The scan beam sweeps while LIVE, faintly while PARTIAL, and stops for STALE, OFFLINE,
+  UNKNOWN and AWAITING.
 
-### 7.3 Severity, reactive flash, sparklines
-```js
-function computeOverall(){                 // worst-wins across integrity/services/nodes
-  let crit=0, warn=0;
-  DATA.integrity.forEach(c => c.s==='r'?crit++ : c.s==='y'&&warn++);
-  ...
-  return {crit, warn, level: crit?'crit':(warn?'warn':'ok')};
-}
-// header text/colour follows level; .node.crit / .ichip.crit get a red critpulse animation.
+### 7.3 Four lamps and their precedence
+| Lamp | Source | Notes |
+|---|---|---|
+| INFRASTRUCTURE | conditions from the snapshot | CRITICAL / DEGRADED / **NO FAULTS** (only while confidence is CURRENT) / NO FAULTS SEEN / UNKNOWN |
+| TELEMETRY CONFIDENCE | link + per-panel freshness | CURRENT / PARTIAL (names the blind sources) / STALE / NO DATA / UNKNOWN / AWAITING |
+| INCIDENT | `/api/incident` via `nfmIncidentState` | `NO_SELECTION` is dim "NONE SELECTED · not a health claim", never green |
+| OWNER REVIEW · SECURITY | `/api/proposals` via `nfmProposalState` | severity is that function's existing tone; unavailable intake is UNKNOWN, never 0 |
 
-function sparkSVG(vals){ /* normalise vals → inline SVG area+line+endpoint */ }
-// each KPI keeps a rolling KPIHIST[key] array; the sparkline is drawn behind the number.
-```
+1. The wall's own link state makes INFRASTRUCTURE `UNKNOWN` (it still says what was last known).
+2. A measured fault always shows, even while other sources are blind.
+3. Green needs current evidence.
+4. INCIDENT and OWNER REVIEW are judged by their own feeds and are untouched by loss of
+   `/api/state`; they never add to the infrastructure count.
 
-### 7.4 Pixel-lock + auto-scale
-The stage is a fixed `1920×1080` box; `fit()` scales it to the actual viewport and
-centres it, so it's crisp at 1:1 on the wall and still fits any laptop:
+### 7.4 Needs attention
+`nfmConditions` emits one entry per independent condition — node down, service check
+failing, integrity chip, WAN posture, UPS status, RKE2 readiness, stale source — each naming
+its own system. Nothing is merged and no cause is inferred ("cause not determined");
+placement is shown only from inventory, labelled. UPS on battery is a warning, low battery
+critical, and runtime/charge below the **existing** Grafana `ups-power` limits
+(< 300 s, < 50 %) critical; the wall adds no limits of its own.
+When the list is longer than the panel, `nfmAttentionPlan` keeps full lines for the worst
+items and names **every** remaining critical system in a bounded summary grouped by
+domain; the summary shrinks its text only after trading full lines for space, and an
+unfittable list says so in red.
+
+### 7.5 Collector freshness (display limit, not an alert)
+`serve.py` marks the netframe-monitor panel by the collection's own `finished` time, not by
+whether `last_run.json` could be read. `COLLECTOR_MAX_AGE` = `WAN_POLICY_MAX_AGE` = 35 min
+(one limit for one file). Schedule: `OnUnitActiveSec=15min` measured from the previous
+*start*, `TimeoutStartSec=600`. Consecutive `finished` times are 15 min plus the
+difference between the two runs' durations apart, so 35 min tolerates one missed run only
+while consecutive durations differ by ≤ 5 min, and two consecutive misses always exceed it;
+it does **not** count missed runs exactly. Boundary: age ≤ 35:00 is FRESH, > 35:00 STALE;
+an undated or future `finished` is STALE with age unknown. This only changes presentation;
+the paging rule for a stopped collector is Grafana's `NetframeMonitorStale` (> 1 h, pending
+15 min). `serve.py` publishes `collector.{finished_at, started_at, duration_s}` so the
+real run durations can be checked before anyone proposes a different limit.
+
+### 7.6 Pixel-lock + auto-scale
+The stage is a fixed `1920×1080` box; `fit()` applies **one** translate + scale, so it is
+crisp at 1:1 on the wall and letterboxes cleanly at any other size (verified at 1280×720,
+1920×1080 and 2560×1440). Nothing else positions the stage — the previous flexbox
+centring plus margins clipped the header and right rail at any non-1080p viewport.
 ```js
 function fit(){
-  const s = Math.min(innerWidth/1920, innerHeight/1080) * SAFE;   // SAFE=1; lower it if a monitor overscans
-  stage.style.transform = `scale(${s})`;
-  stage.style.marginLeft = ((innerWidth - 1920*s)/2)+'px'; ...
+  const s = Math.min(innerWidth/1920, innerHeight/1080);
+  stage.style.transform = `translate(${(innerWidth-1920*s)/2}px,${(innerHeight-1080*s)/2}px) scale(${s})`;
 }
 ```
+### 7.7 Tests and the render harness
+No test touches the estate. The pure blocks (`NFM-*-BEGIN/END`) are extracted from the shipped
+HTML and exercised offline; `serve.py` is exercised with its fetch layer monkeypatched.
+```bash
+for t in tests/test_*.py;  do python3 "$t"; done
+for t in tests/test_*.mjs; do node "$t";    done      # p7 parity: set NFM_PARITY_HTML to another instance's page
+# render the REAL page against fixture scenarios (normal degraded critical overflow crowded
+# startup stale disconnected future recovered), then open http://localhost:8901/?probe=1
+python3 tests/render/fixture_server.py critical 8901
+```
+
 > **Overflow vs. overscan:** if content is clipped at an edge, it's almost always a panel
 > spilling its box, not the monitor. Every panel has `overflow:hidden` and grid tracks use
 > `minmax(0,1fr)` so a wide child can't shove a neighbour off-screen.
@@ -462,8 +510,12 @@ command-pinned access.
   which is `.gitignore`d. The page and `serve.py` contain none.
 - **Everything read-only** — forced-command wrappers, a read-only k8s token, read-only API
   users. Nothing the dashboard can reach can change your infrastructure.
-- **Fail-safe** — a dead source becomes `None`; the aggregator serves last-good; the page
-  falls back to mock. No blank walls, no crashes.
+- **Fail-honest** — a dead source becomes `None` and its panel is carried as `STALE` with
+  its true age; a dead backend shows `NO CARRIER` over the last real values. No blank
+  walls, no crashes, and no invented numbers.
+- **Known exposure (unchanged here):** `serve.py` listens on `0.0.0.0` without
+  authentication and the OPNsense/Kubernetes clients skip TLS verification. Restrict
+  `:8088` to the display host and pin the CAs before treating the snapshot as private.
 
 ---
 
@@ -476,7 +528,9 @@ command-pinned access.
 | cage runs, screen stays on the console | cage grabbed the **wrong DRM card** (the v3d render node has no outputs). Set `WLR_DRM_DEVICES` to the card whose `.../cardN-HDMI-*/status` is `connected`. |
 | cage runs, Chromium runs, but nothing draws | Chromium needs **`--ozone-platform=wayland`** to render onto the Wayland compositor. |
 | Right column clipped at the edge | Not overscan — a **panel spilling its box**. Ensure `overflow:hidden` on panels and `minmax(0,1fr)` on grid tracks. |
-| WiFi connects but every panel goes mock | The Pi joined a **VLAN that can't reach your data sources** (e.g. IoT/guest). Use an SSID on your management/trusted VLAN. |
+| WiFi connects but every panel reads NOT REPORTED / sources MISSING | The Pi joined a **VLAN that can't reach your data sources** (e.g. IoT/guest). Use an SSID on your management/trusted VLAN. |
+| Wall shows `SIGNAL STALE` while the API answers | The backend is publishing an old snapshot (snapshot `ts` > 90 s old). Check `journalctl -u netframe-dashboard` for build errors or a stuck refresher. |
+| Wall shows `SIGNAL UNVERIFIED` | A timestamp is more than 60 s in the future: check NTP on the dashboard host (and on the incident producer for the incident strip). |
 | Clock is wrong | The clock uses the **browser's timezone** = the Pi's system timezone. `sudo timedatectl set-timezone Area/City`. |
 
 ---
