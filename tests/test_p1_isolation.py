@@ -2,15 +2,18 @@
 """P1 offline fixtures - NO production access. Monkeypatches the fetch layer to inject failure modes
 and asserts the isolation invariants: ts always advances; one bad source degrades only its panel;
 ERROR != STALE != MISSING; mode derived (never hardcoded LIVE); the exact Loki-null freeze is gone."""
-import importlib.util, sys, time, os
-spec = importlib.util.spec_from_file_location("serve", "/home/machismo/netframe-dashboard/serve.py")
+import importlib.util, sys, time, os, datetime
+HERE = os.path.dirname(os.path.abspath(__file__))
+spec = importlib.util.spec_from_file_location("serve", os.path.join(HERE, "..", "serve.py"))
 S = importlib.util.module_from_spec(spec); spec.loader.exec_module(S)
 fails = []
 def chk(n, c): print(("PASS " if c else "FAIL ") + n); (fails.append(n) if not c else None)
 
 # neutralize all real I/O: no ssh priming, no network
 S.sh = lambda *a, **k: ""
-GOOD_MON = {"nodes": {"jarvis": {"journal_errors": {"metrics": {"error_lines": 2, "auth_failures": 0}, "verdict": "OK"},
+# A collection is only fresh if it says when it ran (`finished`); an undated one is not evidence.
+GOOD_MON = {"finished": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "nodes": {"jarvis": {"journal_errors": {"metrics": {"error_lines": 2, "auth_failures": 0}, "verdict": "OK"},
                                  "net_syslog_flow": {"metrics": {"count": 5}, "verdict": "OK"}}}}
 
 def patch(**fns):

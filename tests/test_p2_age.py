@@ -13,7 +13,10 @@ fails = []
 def chk(n, c): print(("PASS  " if c else "FAIL  ") + n); (fails.append(n) if not c else None)
 
 S.sh = lambda *a, **k: ""
-GOOD_MON = {"nodes": {"jarvis": {"journal_errors": {"metrics": {"error_lines": 1, "auth_failures": 0}, "verdict": "OK"},
+import datetime
+# Dated at the fixture clock's t0 (1_000_000): a collection with no `finished` is not a fresh observation.
+GOOD_MON = {"finished": datetime.datetime.fromtimestamp(1_000_000.0, datetime.timezone.utc).isoformat(),
+            "nodes": {"jarvis": {"journal_errors": {"metrics": {"error_lines": 1, "auth_failures": 0}, "verdict": "OK"},
                                  "net_syslog_flow": {"metrics": {"count": 5}, "verdict": "OK"}}}}
 NODES_UP = {"jarvis": 1.0, "pve3": 1.0}
 

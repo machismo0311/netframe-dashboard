@@ -134,37 +134,86 @@ def _m(M, node, check):
 def _s(verdict):
     return "g" if verdict in ("OK", "SKIPPED") else ("y" if verdict == "WARN" else "r")
 
+def _su(verdict):
+    """Like _s, but ABSENCE stays distinct from failure and from health: no verdict is "u" (unknown).
+    A check that did not run is a blind spot, never "0", "STABLE" or "NONE"."""
+    return "u" if verdict in (None, "UNKNOWN") else _s(verdict)
+
+_SEV_RANK = {"g": 0, "u": 1, "y": 2, "r": 3}
+
+def _worst(sevs):
+    return max(sevs, key=lambda s: _SEV_RANK.get(s, 1)) if sevs else "u"
+
 def integrity(M):
     if not M.get("nodes"):
         return None
     nodes = M["nodes"]
-    # aggregate journal signals across every host that ran the check
-    # INV-020: dict.get(key, default) does NOT protect against a null VALUE - guard every coercion
-    err = sum((_m(M, n, "journal_errors").get("error_lines") or 0) for n in nodes if "journal_errors" in nodes[n])
-    authf = sum((_m(M, n, "journal_errors").get("auth_failures") or 0) for n in nodes if "journal_errors" in nodes[n])
-    jv = "WARN" if any(_v(M, n, "journal_errors") == "WARN" for n in nodes if "journal_errors" in nodes[n]) else "OK"
-    # SMART: worst pending sectors + any failed
-    pend = max([(_m(M, n, "smart").get("worst_pending_sectors") or 0) for n in nodes if "smart" in nodes[n]] or [0])
-    failed = any(_m(M, n, "smart").get("failed") for n in nodes if "smart" in nodes[n])
-    sv = "r" if failed else ("y" if pend else "g")
-    bk = _chk(M, "randy", "backup_verify"); bm = bk.get("metrics", {})
-    hd = _chk(M, "randy", "hardening_drift"); hm = hd.get("metrics", {})
-    npm = _m(M, "pve3", "npm_dns")
-    flow = _m(M, "monitoring", "net_syslog_flow").get("count") or 0   # INV-020: null count -> 0, never int(None)
+    U = lambda k: {"k": k, "v": "UNKNOWN", "s": "u"}
+    out = []
+    # backup verify: an absent check is UNKNOWN, not a red "?" and not a pass
+    bk = _chk(M, "randy", "backup_verify"); bm = bk.get("metrics", {}) or {}
+    out.append({"k": "Backup Verify", "v": str(bm.get("overall") or "?").upper(), "s": _su(bk.get("verdict"))}
+               if bk else U("Backup Verify"))
+    hd = _chk(M, "randy", "hardening_drift"); hm = hd.get("metrics", {}) or {}
+    out.append({"k": "Hardening Drift", "v": ("DRIFT" if hm.get("any_drift") else "NONE") + (" · STALE" if hm.get("stale") else ""),
+                "s": _su(hd.get("verdict"))} if hd else U("Hardening Drift"))
     pa = _v(M, "monitoring", "page_auth"); ca = _v(M, "monitoring", "console_auth")
-    exposure = "g" if pa == "OK" and ca == "OK" else "y"
-    return [
-        {"k": "Backup Verify",  "v": (bm.get("overall", "?").upper() or "?"), "s": _s(bk.get("verdict"))},
-        {"k": "Hardening Drift","v": ("DRIFT" if hm.get("any_drift") else "NONE") + (" · STALE" if hm.get("stale") else ""), "s": _s(hd.get("verdict"))},
-        {"k": "Exposure Guard", "v": "401 ENFORCED" if exposure == "g" else "CHECK", "s": exposure},
-        {"k": "Journal Errors", "v": str(int(err)), "s": _s(jv)},
-        {"k": "Auth Failures",  "v": str(int(authf)), "s": "g" if authf == 0 else "r"},
-        {"k": "LLM Router",     "v": "CONFORMANT" if _v(M, "jarvis", "llm_router_conformance") == "OK" else "CHECK", "s": _s(_v(M, "jarvis", "llm_router_conformance"))},
-        {"k": "NPM DNS",        "v": "%d MISSING" % npm.get("missing_count", 0), "s": "g" if npm.get("missing_count", 0) == 0 else "y"},
-        {"k": "Net Dead-man",   "v": "FLOW %d" % int(flow), "s": _s(_v(M, "monitoring", "net_syslog_flow"))},
-        {"k": "SMART Trend",    "v": ("STABLE" if not pend and not failed else ("%d PENDING" % pend if pend else "FAIL")), "s": sv},
-        {"k": "Wazuh SIEM",     "v": "CORE OK" if _v(M, "wazuh", "wazuh") == "OK" else "CHECK", "s": _s(_v(M, "wazuh", "wazuh"))},
-    ]
+    if "UNKNOWN" in (pa, ca):
+        out.append(U("Exposure Guard"))
+    else:
+        out.append({"k": "Exposure Guard", "v": "401 ENFORCED" if pa == ca == "OK" else "CHECK",
+                    "s": "g" if pa == ca == "OK" else "y"})
+    # journal: aggregate only over hosts that RAN the check. None ran it -> UNKNOWN, never "0".
+    # INV-020: dict.get(key, default) does NOT protect against a null VALUE - guard every coercion
+    jh = [n for n in nodes if "journal_errors" in nodes[n]]
+    if jh:
+        err = sum((_m(M, n, "journal_errors").get("error_lines") or 0) for n in jh)
+        authf = sum((_m(M, n, "journal_errors").get("auth_failures") or 0) for n in jh)
+        # worst verdict wins: a CRIT/ERROR verdict used to be reported as OK because only WARN was looked for
+        out.append({"k": "Journal Errors", "v": str(int(err)), "s": _worst([_su(_v(M, n, "journal_errors")) for n in jh])})
+        out.append({"k": "Auth Failures", "v": str(int(authf)), "s": "g" if authf == 0 else "r"})
+    else:
+        out += [U("Journal Errors"), U("Auth Failures")]
+    lv = _v(M, "jarvis", "llm_router_conformance")
+    out.append(U("LLM Router") if lv == "UNKNOWN" else
+               {"k": "LLM Router", "v": "CONFORMANT" if lv == "OK" else "CHECK", "s": _s(lv)})
+    npm = _m(M, "pve3", "npm_dns"); mc = npm.get("missing_count")
+    out.append({"k": "NPM DNS", "v": "%d MISSING" % mc, "s": "g" if mc == 0 else "y"}
+               if isinstance(mc, int) and not isinstance(mc, bool) else U("NPM DNS"))
+    fv = _v(M, "monitoring", "net_syslog_flow")
+    flow = _m(M, "monitoring", "net_syslog_flow").get("count")
+    out.append(U("Net Dead-man") if fv == "UNKNOWN" else
+               {"k": "Net Dead-man", "v": "FLOW %s" % (int(flow) if isinstance(flow, (int, float)) else "?"), "s": _s(fv)})
+    sh_ = [n for n in nodes if "smart" in nodes[n]]
+    if sh_:
+        pend = max([(_m(M, n, "smart").get("worst_pending_sectors") or 0) for n in sh_] or [0])
+        failed = any(_m(M, n, "smart").get("failed") for n in sh_)
+        out.append({"k": "SMART Trend", "v": ("STABLE" if not pend and not failed else ("%d PENDING" % pend if pend else "FAIL")),
+                    "s": "r" if failed else ("y" if pend else "g")})
+    else:
+        out.append(U("SMART Trend"))
+    wv = _v(M, "wazuh", "wazuh")
+    out.append(U("Wazuh SIEM") if wv == "UNKNOWN" else
+               {"k": "Wazuh SIEM", "v": "CORE OK" if wv == "OK" else "CHECK", "s": _s(wv)})
+    return out
+
+def ups_status(M):
+    """Utility/battery state per UPS, from netframe-monitor's existing `ups` check (upsc ups.status).
+    This is the only source of ON LINE / ON BATTERY / LOW BATTERY; Prometheus here carries load,
+    charge and runtime only. Raw NUT tokens are passed through; the renderer decides wording."""
+    c = _chk(M, "monitoring", "ups")
+    if not c:
+        return None
+    met = c.get("metrics") or {}
+    units = {}
+    for name, v in ((met.get("ups") or {}) if isinstance(met.get("ups"), dict) else {}).items():
+        if isinstance(v, dict):
+            stt = v.get("ups.status")
+            units[name] = {"status": stt.strip() if isinstance(stt, str) and stt.strip() else None}
+    rep = met.get("reporting")
+    return {"verdict": c.get("verdict", "UNKNOWN"),
+            "reporting": rep if isinstance(rep, int) and not isinstance(rep, bool) else None,
+            "units": units}
 
 def all_guests(M):
     g = {}
@@ -196,7 +245,9 @@ def services(M):
         ("Jellyfin",       "Randy:8096",  None),
         ("Home Assistant", "VM110·pve5",  gs("homeassistant")),
     ]
-    return [{"n": n, "h": h, "s": s or "g"} for (n, h, s) in spec]
+    # No probe and no guest record is UNKNOWN ("u"), not green. OPNsense and Jellyfin have no probe at
+    # all, and used to render healthy by construction.
+    return [{"n": n, "h": h, "s": s or "u"} for (n, h, s) in spec]
 
 def slurm():
     """running/pending jobs + partitions from QuarkyLab via the nfm-slurm wrapper."""
@@ -430,6 +481,24 @@ def opnsense_stats():
 #: minutes after someone disarms the policy, which is config drift rather than an outage.
 WAN_POLICY_MAX_AGE = 35 * 60
 
+#: Dashboard FRESHNESS limit for the netframe-monitor collection, measured from last_run.json's own
+#: `finished` time. It decides PRESENTATION only: past it the monitor panel is STALE and its values
+#: are shown with their age. It notifies nobody. The paging rule for a stopped collector is Grafana's
+#: NetframeMonitorStale (age > 1h, pending 15m), which this does not change.
+#:
+#: Deliberately the SAME value as WAN_POLICY_MAX_AGE: both read the same file, and two limits for one
+#: observation would let two panels disagree about it. Schedule facts (netframe-monitor.timer /
+#: .service): OnUnitActiveSec=15min (measured from the previous START), TimeoutStartSec=600. The gap
+#: between consecutive `finished` times is 15 min + (this run's duration - the previous run's), so
+#: 35 min does NOT count missed runs exactly: it covers one missed run only while consecutive run
+#: durations differ by <= 5 min, and two consecutive misses always exceed it. Boundary: age <= limit
+#: is FRESH, age > limit is STALE. Any change to this value is a separate, reviewed proposal.
+COLLECTOR_MAX_AGE = WAN_POLICY_MAX_AGE
+
+#: How far in the future a timestamp may be before it is treated as a broken or skewed clock rather
+#: than a fresh observation. Same tolerance wan_posture_fresh() already applies.
+FUTURE_TOLERANCE = 60
+
 #: pf netif -> dashboard WAN key. Mirrors opnsense_stats()'s idmap one layer down.
 _PF_NETIF = {"vtnet0": "wan1", "vtnet2": "wan2"}
 
@@ -543,9 +612,12 @@ def build_state(prev=None):
         # prev is republished with a new ts every cycle, so aging against prev["ts"] re-aged
         # carried data to one refresh interval forever - 12-day-old data reported ~30s.
         fa = (prev_panels.get(name) or {}).get("fresh_at")
-        fa = fa if isinstance(fa, (int, float)) else None
+        fa = fa if isinstance(fa, (int, float)) and not isinstance(fa, bool) else None
+        if fa is not None and fa > now + FUTURE_TOLERANCE:
+            fa = None                      # a future observation time is a broken clock, not "very fresh"
+            reason = "%s; observation time was in the future" % reason
         # No original observation time -> age is UNKNOWN (None). Never report stale data as young.
-        age = round(now - fa) if (got and fa is not None) else None
+        age = max(0, round(now - fa)) if (got and fa is not None) else None
         mark(name, got, ("ERROR" if error else ("STALE" if got else "MISSING")), age, reason, fa)
 
     def section(name, keys, assemble, has_data):
@@ -651,13 +723,38 @@ def build_state(prev=None):
             gm = gpus_from_monitor(M)
         if ig: st["integrity"] = ig
         if svv: st["services"] = svv
+        us = ups_status(M)
+        if us: st["ups_status"] = us
         if gm:
             st["gpus"] = gm
             for g in gm:
                 st["nodes"].setdefault(g["host"], {})["gpu"] = {
                     "temps": g["temps"], "util": g["util"],
                     "vramU": round(g["vramU"] / 1024, 1), "vram": round(g["vram"] / 1024)}
-    section("monitor", ["integrity", "services", "gpus"], _monitor, lambda: bool(st.get("integrity")))
+    section("monitor", ["integrity", "services", "gpus", "ups_status"], _monitor, lambda: bool(st.get("integrity")))
+    # A successful READ of last_run.json is not a fresh OBSERVATION. The collection carries its own
+    # clock in `finished`; judge the panel by that, so a stopped collector cannot stay "FRESH" forever.
+    _fin = _run_finished_epoch(R.get("M"))
+    _mp = st["panels"].get("monitor") or {}
+    if _mp.get("state") == "FRESH":
+        if _fin is None:
+            mark("monitor", True, "STALE", None, "collector run time unknown (no usable `finished`)", None)
+        elif _fin > now + FUTURE_TOLERANCE:
+            mark("monitor", True, "STALE", None, "collector `finished` is %ds in the future" % round(_fin - now), None)
+        elif now - _fin > COLLECTOR_MAX_AGE:
+            mark("monitor", True, "STALE", round(now - _fin),
+                 "collector last finished %dm ago (display limit %dm)" % ((now - _fin) // 60, COLLECTOR_MAX_AGE // 60), _fin)
+        else:
+            # FRESH, but aged by the collector's clock, and carried data will age from the same point
+            mark("monitor", True, "FRESH", max(0, round(now - _fin)), None, _fin)
+    _M = R.get("M") or {}
+    if _fin is not None and _fin <= now + FUTURE_TOLERANCE:
+        _sta = _run_finished_epoch({"finished": _M.get("started")})
+        st["collector"] = {"finished_at": _fin, "started_at": _sta,
+                           "duration_s": round(_fin - _sta, 1) if _sta is not None and _sta <= _fin else None,
+                           "max_age_s": COLLECTOR_MAX_AGE}
+    elif prev.get("collector"):
+        st["collector"] = prev["collector"]
     # GPU panel provenance: FRESH only when the live exporter fed it
     _gl = st.pop("_gpu_live", False)
     _gfa = (prev_panels.get("gpu") or {}).get("fresh_at")
