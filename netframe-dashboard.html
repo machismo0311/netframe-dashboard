@@ -369,15 +369,27 @@ function nfmUpsState(m, key){
   if(below) sev='r';
   return {sev:sev, label:label, raw:raw, below:below, load:u.load, batt:u.batt, runtime:u.runtime};
 }
+/* How old a panel's data is NOW. From its original observation time (fresh_at) when the snapshot
+   carries one; otherwise the backend's age at build time PLUS the time elapsed since the snapshot was
+   built. An age must keep advancing after the snapshot is generated - it never freezes at the value
+   it had when the backend wrote it. A future fresh_at is not trusted. Unknown stays null. */
+function nfmPanelAge(m, name, nowSec){
+  const p=nfmObj(m.panels && m.panels[name]); if(!p) return null;
+  const fa=nfmNum(p.fresh_at);
+  if(fa!==null && fa<=nowSec+60) return Math.max(0, nowSec-fa);
+  const a=nfmNum(p.age), ts=m.ts;
+  if(a!==null && ts!==null && ts<=nowSec+60) return a+Math.max(0, nowSec-ts);
+  return null;
+}
 /* NFM-MODEL-END */
 
 /* NFM-CONDITIONS-BEGIN  (pure; offline-tested by tests/test_p9_wall_state.mjs)
    One entry per INDEPENDENT condition, each naming its own system and source. Nothing is merged,
    deduplicated or explained by an assumed cause: the wall does not know why pve3 is down, so it says
    "cause not determined". A placement fact is shown only from declared inventory, labelled as such. */
-function nfmConditions(m, wan){
+function nfmConditions(m, wan, nowSec){
   const out=[], P=m.panels||{};
-  const tag=src=>{ const p=P[src]; return (p && p.state && p.state!=='FRESH') ? ' · LAST KNOWN '+nfmAgeText(p.age) : ''; };
+  const tag=src=>{ const p=P[src]; return (p && p.state && p.state!=='FRESH') ? ' · LAST KNOWN '+nfmAgeText(nfmPanelAge(m,src,nowSec)) : ''; };
   const add=(sev,dom,sys,text,src)=>out.push({sev:sev, dom:dom, sys:sys, text:text+(src?tag(src):'')});
   NFM_INV.nodes.forEach(n=>{ if(m.nodes[n.host].st==='r')
     add('r','NODE',n.host,n.host+' not responding (node-exporter up = 0) · cause not determined','prometheus'); });
@@ -401,7 +413,8 @@ function nfmConditions(m, wan){
   if(k && typeof k.nodes==='number' && typeof k.ready==='number' && k.ready<k.nodes)
     add('r','RKE2','RKE2',(k.nodes-k.ready)+' of '+k.nodes+' RKE2 nodes NotReady (Kubernetes API) · cause not determined','k8s');
   Object.keys(P).sort().forEach(name=>{ const p=P[name]; if(!nfmObj(p) || p.state==='FRESH') return;
-    add('u','TELEMETRY',name,'source '+name+' '+String(p.state)+(p.age!=null?' · '+nfmAgeText(p.age)+' old':'')
+    const pa=nfmPanelAge(m,name,nowSec);
+    add('u','TELEMETRY',name,'source '+name+' '+String(p.state)+(pa!==null?' · '+nfmAgeText(pa)+' old':'')
         +(p.error?' · '+String(p.error).slice(0,80):'')); });
   const rank={r:0,y:1,u:2};
   return out.map((x,i)=>[x,i]).sort((a,b)=>rank[a[0].sev]-rank[b[0].sev] || a[1]-b[1]).map(a=>a[0]);
@@ -434,7 +447,7 @@ function nfmLamps(ds, m, conds, incFeed, propFeed, nowSec){
   else if(ds.state==='STALE') conf=L('conf','TELEMETRY CONFIDENCE','r','STALE','snapshot '+(ds.age!=null?nfmAgeText(ds.age)+' old':'age unknown')+' · '+ds.reason);
   else if(ds.state==='UNKNOWN') conf=L('conf','TELEMETRY CONFIDENCE','y','UNKNOWN',ds.reason);
   else if(ds.state==='DEGRADED') conf=L('conf','TELEMETRY CONFIDENCE','y','PARTIAL',fresh.length+'/'+pn.length+' sources current · '
-        +ds.stale.map(n=>n+' '+nfmAgeText(P[n] && P[n].age)).join(' · '));
+        +ds.stale.map(n=>n+' '+nfmAgeText(nfmPanelAge(m,n,nowSec))).join(' · '));
   else conf=L('conf','TELEMETRY CONFIDENCE','g','CURRENT','all '+pn.length+' sources fresh'
         +(m.collector && typeof m.collector.finished_at==='number' ? ' · collector ran '+nfmAgeText(nowSec-m.collector.finished_at)+' ago' : ''));
   const current=(ds.state==='LIVE' || ds.state==='DEGRADED');
@@ -534,7 +547,8 @@ function bar(label,val,pct,color){
 }
 const panel=(t,sub,body,cls)=>`<div class="panel ${cls||''}"><div class="ph"><span class="glyph"></span><span class="t">${E(t)}</span><span class="sub">${sub||''}</span></div>${body}</div>`;
 const isStale=(m,src)=>{ const p=m.panels[src]; return !!(p && p.state && p.state!=='FRESH'); };
-const staleNote=(m,src)=>{ const p=m.panels[src]; return p && p.state!=='FRESH' ? String(p.state)+(p.age!=null?' '+nfmAgeText(p.age):'')+' · last known' : ''; };
+const staleNote=(m,src)=>{ const p=m.panels[src], a=nfmPanelAge(m,src,Date.now()/1000);
+  return p && p.state!=='FRESH' ? String(p.state)+(a!==null?' '+nfmAgeText(a):'')+' · last known' : ''; };
 
 /* ---------------- lamps + uplink ---------------- */
 function renderLamps(v){
@@ -626,34 +640,59 @@ function renderAttention(v){
   box.insertAdjacentHTML('afterbegin',`<div class="sl mono" style="color:var(--red);font-size:13px">✖ ATTENTION LIST EXCEEDS PANEL · ${crit} CRITICAL · SEE INFRASTRUCTURE LAMP</div>`);
 }
 
+/* NFM-INTEL-FIT-BEGIN  (pure; offline-tested by tests/test_p9_wall_state.mjs)
+   May a listed proposal's DETAIL ROW be hidden for space? Only when the authoritative head counts
+   already disclose its class, so hiding a row can never hide a condition:
+     SECURITY / DETECTION_RECORDED  -> disclosed by security_pending (or pending_detections) > 0
+     ACTIVE / FIRING                -> disclosed by pending_firing > 0
+     HISTORY / CLEARED              -> shown in the head as resolved/history; not a live condition
+   Anything else (unknown class, or counts that are not authoritative) is never hidden. */
+function nfmIntelHideable(feed){
+  const f=(feed && typeof feed==='object') ? feed : {}, sm=(f.summary && typeof f.summary==='object') ? f.summary : {};
+  const auth=sm.counts_are_authoritative===true, pos=v=>typeof v==='number' && v>0;
+  return (Array.isArray(f.proposals) ? f.proposals : []).filter(p=>p && typeof p==='object').map(p=>{
+    if(!auth) return false;
+    const cond=p.source_condition, cls=p.action_class;
+    if(cond==='DETECTION_RECORDED' || cls==='SECURITY') return pos(sm.security_pending) || pos(sm.pending_detections);
+    if(cond==='FIRING' || cls==='ACTIVE') return pos(sm.pending_firing);
+    if(cond==='CLEARED' || cls==='HISTORY') return true;
+    return false;
+  });
+}
+/* NFM-INTEL-FIT-END */
+
 /* ---------------- fit the proposal projection into its panel ----------------
-   The projection is rendered by nfmProposalPanel unchanged. To fit: repeated identical explanatory
-   notes are shown once, the whole projection scales (14 px down to 11 px), and only as a last resort
-   trailing listed items are hidden - with an explicit note saying so. The headline count, the
-   security count and the authority line are in the head and are never hidden. */
+   The projection is rendered by nfmProposalPanel unchanged. To fit, in order: repeated identical
+   explanatory notes are shown once (the first instance always stays, so "not proof of breach or
+   compromise" and "no incident was resolved" remain on screen); the projection scales 14 -> 12 px;
+   then detail rows the head already discloses are hidden from the end; then 11 px. The head - owner
+   action count, security count, firing count, authority line - is never hidden, and a disclosure line
+   separates the authoritative totals from the number of detail rows shown here. */
 function fitIntel(){
   const host=el('proposals'), box=el('intelpanel');
   if(!host || host.className!=='on') return;
   const pp=host.querySelector('.ppanel'); if(!pp) return;
   pp.querySelectorAll('.ptrunc').forEach(n=>n.remove());          /* idempotent: runs on every render */
   const seen={};
-  host.querySelectorAll('.pnote').forEach(n=>{ const t=n.textContent; n.style.display=seen[t]?'none':''; seen[t]=1; });
-  const rows=[...pp.querySelectorAll('.prow')];
+  pp.querySelectorAll('.pnote').forEach(n=>{ const t=n.textContent; n.style.display=seen[t]?'none':''; seen[t]=1; });
+  const rows=[...pp.querySelectorAll('.prow')], may=nfmIntelHideable(FEEDS.prop.feed);
   rows.forEach(r=>{ r.style.display=''; });
+  const foot=pp.querySelector('.pfoot'); if(foot) foot.style.display='';
   const over=()=>box.scrollHeight>box.clientHeight+1;
-  /* readability first: shrink only to 12 px, then drop trailing listed items, then 11 px */
   for(let fs=14; fs>=12; fs--){ pp.style.fontSize=fs+'px'; if(!over()) return; }
+  const f=FEEDS.prop.feed||{}, sm=f.summary||{};
   let hidden=0;
-  const foot=pp.querySelector('.pfoot');
-  const mark=()=>{ pp.querySelectorAll('.ptrunc').forEach(n=>n.remove());
-    if(hidden) pp.insertAdjacentHTML('beforeend','<div class="pnote ptrunc" style="color:var(--yellow)">+ '+hidden
-      +' listed proposal(s) not shown here for space · review with netframe incident proposals</div>'); };
+  const disclose=()=>{ pp.querySelectorAll('.ptrunc').forEach(n=>n.remove());
+    if(!hidden) return;
+    const awaiting=typeof sm.awaiting_owner_review==='number' ? sm.awaiting_owner_review.toLocaleString('en-US') : '?';
+    pp.insertAdjacentHTML('beforeend','<div class="pnote ptrunc" style="color:var(--yellow)">DETAIL ROWS '
+      +(rows.length-hidden)+' OF '+rows.length+' SHOWN HERE (space) · PRODUCER LISTED '+rows.length+' OF '+awaiting
+      +' AWAITING · TOTALS ABOVE ARE AUTHORITATIVE · review with netframe incident proposals</div>'); };
   for(let i=rows.length-1; i>=0 && over(); i--){
-    rows[i].style.display='none';
-    const nx=rows[i].nextElementSibling; if(nx && nx.classList.contains('pnote')) nx.style.display='none';
-    hidden++; mark();
+    if(may[i]!==true) continue;                     /* never hide a row whose class the head does not disclose */
+    rows[i].style.display='none'; hidden++; disclose();
   }
-  if(over() && foot) foot.style.display='none';   /* the CLI hint; the truncation note already names it */
+  if(over() && foot && hidden) foot.style.display='none';   /* the disclosure line already names the CLI */
   if(over()) pp.style.fontSize='11px';
 }
 
@@ -714,7 +753,7 @@ function renderBottom(m){
   const pipe=panel('Telemetry Pipeline','sources fresh',
     `<div class="kv"><span class="k">SOURCES CURRENT</span><span class="v" style="color:${fr===names.length&&names.length?'var(--green)':'var(--yellow)'}">${fr} / ${names.length}</span></div>
      <div class="segbar">${names.map(k=>`<i class="${P[k].state==='FRESH'?'on':(P[k].state==='STALE'?'s':'m')}"></i>`).join('')}</div>
-     <div class="note">${names.map(k=>P[k].state==='FRESH'?E(k):`<span style="color:${P[k].state==='STALE'?'var(--yellow)':'var(--unk)'}">${E(k)} ${E(P[k].state)}${P[k].age!=null?' '+nfmAgeText(P[k].age):''}</span>`).join(' · ')||'no sources reported'}</div>`);
+     <div class="note">${names.map(k=>P[k].state==='FRESH'?E(k):`<span style="color:${P[k].state==='STALE'?'var(--yellow)':'var(--unk)'}">${E(k)} ${E(P[k].state)}${(a=>a!==null?' '+nfmAgeText(a):'')(nfmPanelAge(m,k,Date.now()/1000))}</span>`).join(' · ')||'no sources reported'}</div>`);
   el('bottomrow').innerHTML=storage+network+pipe;
 }
 
@@ -1388,7 +1427,7 @@ function nfmGet(url, signal){
 /* ---------------- lamps / overlay / beam: re-evaluated every second so ages keep advancing ---------------- */
 function nowSec(){ return Date.now()/1000; }
 function currentView(){
-  const t=nowSec(), ds=nfmLinkState(LINK, t), wan=nfmWanPosture(MODEL.opn), conds=nfmConditions(MODEL, wan);
+  const t=nowSec(), ds=nfmLinkState(LINK, t), wan=nfmWanPosture(MODEL.opn), conds=nfmConditions(MODEL, wan, t);
   return {t:t, ds:ds, wan:wan, conds:conds, lamps:nfmLamps(ds, MODEL, conds, FEEDS.inc.feed, FEEDS.prop.feed, t)};
 }
 function recordHistory(m){

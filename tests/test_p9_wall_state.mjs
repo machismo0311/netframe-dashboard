@@ -19,7 +19,7 @@ const blk = (n) => { const m = html.match(new RegExp('/\\* ' + n + '-BEGIN[\\s\\
 const ageFn = html.match(/function nfmAgeText\(sec\)\{[\s\S]*?\n\}/)[0];
 const F = new Function(ageFn + blk('NFM-DISPLAY-STATE') + blk('NFM-INCIDENT-PANEL') + blk('NFM-PROPOSAL-PANEL')
   + blk('NFM-INVENTORY') + blk('NFM-MODEL') + blk('NFM-CONDITIONS') + blk('NFM-LAMPS') + blk('NFM-LINK')
-  + '\n return {nfmAgeText,nfmDisplayState,nfmWanPosture,nfmIncidentState,nfmProposalState,NFM_INV,nfmModel,'
+  + '\n return {nfmAgeText,nfmDisplayState,nfmWanPosture,nfmIncidentState,nfmProposalState,NFM_INV,nfmModel,nfmPanelAge,nfmProposalPanel,'
   + 'nfmUpsState,nfmConditions,nfmNotMeasured,nfmLamps,nfmSampleTracker,nfmLatestGate,nfmLinkState,nfmHeartbeat,nfmBeamMode};')();
 
 let fails = [];
@@ -36,7 +36,7 @@ const noSel = { schema: 'netframe-live-dashboard-feed/v1', status: 'NO_SELECTION
 const props = (mut) => { const p = JSON.parse(JSON.stringify(PROP_FIX)); p.generated_at = iso(NOW - 3); if (mut) mut(p); return p; };
 const view = (s, inc, prop, link) => {
   const L = link || { snap: s, okAt: NOW - 1, fails: 0 };
-  const ds = F.nfmLinkState(L, NOW), m = F.nfmModel(L.snap), wan = F.nfmWanPosture(m.opn), conds = F.nfmConditions(m, wan);
+  const ds = F.nfmLinkState(L, NOW), m = F.nfmModel(L.snap), wan = F.nfmWanPosture(m.opn), conds = F.nfmConditions(m, wan, NOW);
   return { ds, m, wan, conds, lamps: F.nfmLamps(ds, m, conds, inc === undefined ? noSel : inc, prop === undefined ? props() : prop, NOW) };
 };
 const lamp = (v, k) => v.lamps.find(l => l.key === k);
@@ -72,11 +72,11 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   chk('B: all fresh, no faults -> INFRASTRUCTURE NO FAULTS (green)', lamp(ok, 'infra').sev === 'g' && lamp(ok, 'infra').value === 'NO FAULTS');
   chk('B: ...and TELEMETRY CONFIDENCE CURRENT', lamp(ok, 'conf').sev === 'g' && lamp(ok, 'conf').value === 'CURRENT');
   chk('B: the retired phrase "ALL SYSTEMS NOMINAL" is nowhere on the page', !html.includes('ALL SYSTEMS NOMINAL'));
-  const blind = view(snap(s => { s.panels.ups.state = 'STALE'; s.panels.ups.age = 400; s.mode = 'DEGRADED'; }));
+  const blind = view(snap(s => { s.panels.ups.state = 'STALE'; s.panels.ups.age = 400; s.panels.ups.fresh_at = s.ts - 400; s.mode = 'DEGRADED'; }));
   chk('B: one blind source and no faults -> NOT green ("NO FAULTS SEEN")',
       lamp(blind, 'infra').sev === 'u' && lamp(blind, 'infra').value === 'NO FAULTS SEEN', lamp(blind, 'infra'));
   chk('B: ...confidence PARTIAL names the blind source with its age', lamp(blind, 'conf').value === 'PARTIAL' && /ups 7m/.test(lamp(blind, 'conf').why), lamp(blind, 'conf').why);
-  const faultBlind = view(snap(s => { s.nodes.pve3.st = 'r'; s.panels.ups.state = 'STALE'; s.panels.ups.age = 400; s.mode = 'DEGRADED'; }));
+  const faultBlind = view(snap(s => { s.nodes.pve3.st = 'r'; s.panels.ups.state = 'STALE'; s.panels.ups.age = 400; s.panels.ups.fresh_at = s.ts - 400; s.mode = 'DEGRADED'; }));
   chk('B: a measured fault shows even while another source is blind', lamp(faultBlind, 'infra').value === 'CRITICAL');
   const stale = view(snap(s => { s.ts = NOW - 600; s.nodes.pve3.st = 'r'; }));
   chk('B: a stale snapshot (HTTP fine) makes INFRASTRUCTURE UNKNOWN, not CRITICAL or green', lamp(stale, 'infra').sev === 'u');
@@ -128,9 +128,9 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   chk('C: no status reported is unknown, never "on line"', ups(null, 9).sev === 'u' && ups(null, 9).label === 'STATUS UNKNOWN');
   const rep = view(snap(s => { s.ups_status.reporting = 1; }));
   chk('C: only 1 of 2 UPS reporting is an unknown, named', rep.conds.some(c => c.sev === 'u' && /only 1 of 2/.test(c.text)));
-  const st = view(snap(s => { s.panels.switch.state = 'STALE'; s.panels.switch.age = 900; s.mode = 'DEGRADED'; }));
+  const st = view(snap(s => { s.panels.switch.state = 'STALE'; s.panels.switch.age = 900; s.panels.switch.fresh_at = s.ts - 900; s.mode = 'DEGRADED'; }));
   chk('C: a stale source is listed as unknown TELEMETRY, not as a warning', st.conds.some(c => c.dom === 'TELEMETRY' && c.sev === 'u') && !st.conds.some(c => c.sev === 'y'));
-  const lk = view(snap(s => { s.nodes.pve2.st = 'r'; s.panels.prometheus.state = 'STALE'; s.panels.prometheus.age = 300; s.mode = 'DEGRADED'; }));
+  const lk = view(snap(s => { s.nodes.pve2.st = 'r'; s.panels.prometheus.state = 'STALE'; s.panels.prometheus.age = 300; s.panels.prometheus.fresh_at = s.ts - 300; s.mode = 'DEGRADED'; }));
   chk('C: a fault from carried data says LAST KNOWN with its age', /LAST KNOWN 5m/.test(lk.conds.find(c => c.sys === 'pve2').text));
   chk('C: unprobed services are listed as NOT MEASURED, not as healthy', F.nfmNotMeasured(F.nfmModel(snap())).some(x => /OPNsense \(no probe\)/.test(x)));
 }
@@ -220,6 +220,53 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   const pf = F.nfmProposalState(props(p => { p.generated_at = iso(NOW + 600); }), NOW);
   chk('H: proposal feed from the future shows a banner and no current count', pf.show && pf.status !== 'OK' && pf.action === undefined && pf.banner === 'PROPOSAL FEED CLOCK INVALID', pf);
   chk('H: proposal +30 s skew is tolerated', F.nfmProposalState(props(p => { p.generated_at = iso(NOW + 30); }), NOW).status === 'OK');
+}
+
+/* ---------------------------------------------------------------- K: intel detail rows */
+{
+  const K = new Function(blk('NFM-INTEL-FIT') + '\n return {nfmIntelHideable};')();
+  const fp = (sum, list) => ({ summary: Object.assign({ counts_are_authoritative: true }, sum), proposals: list });
+  const det = { source_condition: 'DETECTION_RECORDED', action_class: 'SECURITY' };
+  const fir = { source_condition: 'FIRING', action_class: 'ACTIVE' };
+  const clr = { source_condition: 'CLEARED', action_class: 'HISTORY' };
+  const odd = { source_condition: 'SOMETHING_NEW' };
+  chk('K: a detection row may be hidden only when security_pending discloses it',
+      K.nfmIntelHideable(fp({ security_pending: 4868 }, [det]))[0] === true);
+  chk('K: a detection row is KEPT when the head does not disclose any security pending',
+      K.nfmIntelHideable(fp({ security_pending: 0, pending_detections: 0 }, [det]))[0] === false);
+  chk('K: a firing row may be hidden only when pending_firing discloses it',
+      K.nfmIntelHideable(fp({ pending_firing: 2 }, [fir]))[0] === true && K.nfmIntelHideable(fp({ pending_firing: 0 }, [fir]))[0] === false);
+  chk('K: a cleared/history row may be hidden (not a live condition)', K.nfmIntelHideable(fp({}, [clr]))[0] === true);
+  chk('K: an unknown condition is never hidden', K.nfmIntelHideable(fp({ security_pending: 9, pending_firing: 9 }, [odd]))[0] === false);
+  chk('K: nothing is hidden when counts are not authoritative',
+      K.nfmIntelHideable({ summary: { counts_are_authoritative: false, security_pending: 9 }, proposals: [det, fir, clr] }).every(x => x === false));
+  chk('K: one decision per listed proposal, in render order (non-objects skipped like the renderer)',
+      K.nfmIntelHideable(fp({ security_pending: 1 }, [det, null, clr])).length === 2);
+  /* the wording the cramped panel must keep is produced by the contract renderer, not by fitIntel */
+  chk('K: the contract renderer emits the not-proof-of-compromise note for a detection',
+      /not proof of breach or compromise/.test(F.nfmProposalPanel(props(p => { p.summary.security_pending = 1; p.proposals = [Object.assign({}, p.proposals[0], { source_kind: 'wazuh', source_condition: 'DETECTION_RECORDED', action_class: 'SECURITY' })]; }), NOW)));
+}
+
+/* ---------------------------------------------------------------- J: ages keep advancing */
+{
+  /* the backend built this snapshot 400 s ago; UPS was already 300 s stale then */
+  const old = snap(s => { s.ts = NOW - 400; s.mode = 'DEGRADED';
+    s.panels.ups.state = 'STALE'; s.panels.ups.age = 300; s.panels.ups.fresh_at = NOW - 700;
+    s.panels.monitor.age = 240; s.panels.monitor.fresh_at = NOW - 640; });
+  const m = F.nfmModel(old);
+  chk('J: a carried panel ages from its ORIGINAL observation (300 s at build + 400 s since = 700 s)', F.nfmPanelAge(m, 'ups', NOW) === 700, F.nfmPanelAge(m, 'ups', NOW));
+  chk('J: a FRESH-at-build panel also keeps ageing (240 + 400 = 640 s)', F.nfmPanelAge(m, 'monitor', NOW) === 640);
+  chk('J: ...and keeps advancing with the clock', F.nfmPanelAge(m, 'ups', NOW + 60) === 760);
+  const noFa = F.nfmModel(snap(s => { s.ts = NOW - 400; s.panels.ups.state = 'STALE'; s.panels.ups.age = 300; delete s.panels.ups.fresh_at; }));
+  chk('J: without fresh_at: backend age + time since the snapshot was built', F.nfmPanelAge(noFa, 'ups', NOW) === 700);
+  const fut = F.nfmModel(snap(s => { s.panels.ups.age = 50; s.panels.ups.fresh_at = NOW + 3600; }));
+  chk('J: a future fresh_at is not trusted (falls back to age + elapsed)', F.nfmPanelAge(fut, 'ups', NOW) === 55);
+  const unk = F.nfmModel(snap(s => { s.panels.ups.age = null; delete s.panels.ups.fresh_at; }));
+  chk('J: no age and no fresh_at stays UNKNOWN (null), never 0', F.nfmPanelAge(unk, 'ups', NOW) === null);
+  const deg = snap(s => { s.mode = 'DEGRADED'; s.panels.ups.state = 'STALE'; s.panels.ups.age = 300; s.panels.ups.fresh_at = NOW - 360; s.ts = NOW - 60; });
+  const v = view(deg);
+  chk('J: the confidence lamp shows the advancing age (6m), not the build-time age (5m)', /ups 6m/.test(lamp(v, 'conf').why), lamp(v, 'conf').why);
+  chk('J: the telemetry condition shows the advancing age', v.conds.some(c => c.sys === 'ups' && /6m old/.test(c.text)));
 }
 
 /* ---------------------------------------------------------------- I: attention overflow */

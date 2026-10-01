@@ -27,19 +27,24 @@ INCIDENT = load("netframe-live-dashboard-feed-v1.json")
 iso = lambda t: datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def snapshot(now):
+def snapshot(gen):
+    """Every timestamp is relative to `gen`, the moment the backend GENERATED this snapshot, exactly as
+    serve.py stamps them: ts = gen, FRESH panels observed at gen, the collector finished 240 s before
+    gen (its own clock), the failover posture observed at that same collector run. A stale snapshot is
+    therefore internally consistent: everything in it is old by the same amount."""
     s = copy.deepcopy(SAMPLE)
     s.pop("_comment", None)
-    s["ts"] = now - 4
+    s["ts"] = gen
     for p in s["panels"].values():
-        p["observed_at"] = round(now - 4); p["fresh_at"] = now - 4
-    s["panels"]["monitor"]["fresh_at"] = now - 240
-    s["collector"].update(finished_at=now - 240, started_at=now - 312)
-    s["opnsense"]["failover"]["observed_at"] = now - 240
+        p["observed_at"] = round(gen); p["fresh_at"] = gen; p["age"] = 0
+    s["panels"]["monitor"].update(fresh_at=gen - 240, age=240)
+    s["collector"].update(finished_at=gen - 240, started_at=gen - 312)
+    s["opnsense"]["failover"]["observed_at"] = gen - 240
     return s
 
 
 def stale_panel(s, name, age):
+    """Carried panel: its fresh_at is its ORIGINAL observation, `age` seconds before the snapshot."""
     s["panels"][name].update(state="STALE", age=age, fresh_at=s["ts"] - age)
     s["mode"] = "DEGRADED"
 
@@ -75,7 +80,11 @@ def incident(now):
 
 def state(now):
     CALLS["state"] += 1
-    s = snapshot(now)
+    # stale: the backend keeps answering, but the last snapshot it built is 400 s old (and has a
+    # carried UPS panel that was already 300 s stale when it was built: 700 s old at request time)
+    s = snapshot(now - 400 if SCEN == "stale" else now - 4)
+    if SCEN == "stale":
+        stale_panel(s, "ups", 300)
     if SCEN == "degraded":
         s["opnsense"]["wan2"].update(gw="Offline", lat=None, loss=100.0, down_bps=0)
         stale_panel(s, "ups", 400)
@@ -98,8 +107,6 @@ def state(now):
         s["opnsense"]["wan1"].update(gw="Offline"); s["opnsense"]["wan2"].update(gw="Offline")
         s["ups_status"]["units"]["tripplite"]["status"] = "OB LB"; s["ups"]["tripplite"].update(batt=31.0, runtime=3)
         stale_panel(s, "switch", 1200); stale_panel(s, "slurm", 600)
-    elif SCEN == "stale":
-        s["ts"] = now - 400
     elif SCEN == "future":
         s["ts"] = now + 3600
     return s

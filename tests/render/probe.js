@@ -32,6 +32,14 @@ setTimeout(function(){
     incidentShown: (document.getElementById('incident')||{}).className==='on',
     proposalsShown: (document.getElementById('proposals')||{}).className==='on',
     intelOverflowing: (function(){ var b=document.getElementById('intelpanel'); return b ? b.scrollHeight>b.clientHeight+1 : 'n/a'; })(),
+    intel: (function(){ var b=document.getElementById('intelpanel'); if(!b) return 'n/a'; var t=visText(b);
+      var rows=[].slice.call(b.querySelectorAll('.prow'));
+      return {authorityVisible:/MAX_AUTO_CLASS 0/.test(t), notProofVisible:/not proof of breach or compromise/.test(t),
+              ownerCountVisible:/OWNER ACTION REQUIRED/.test(t), securityCountVisible:/SECURITY DETECTION/.test(t),
+              rowsShown:rows.filter(function(r){return r.style.display!=='none' && inside(r,b);}).length+'/'+rows.length,
+              disclosure:((b.querySelector('.ptrunc')||{}).textContent||'').slice(0,90)}; })(),
+    ages: (function(){ var s=document.getElementById('lamp1'); return s ? s.querySelector('.why').textContent : ''; })(),
+    collectorChip: (function(){ var c=[].slice.call(document.querySelectorAll('.ichip')).pop(); return c ? c.textContent.replace(/\s+/g,' ').trim() : ''; })(),
     randomInPage: /Math\.random/.test(document.documentElement.innerHTML)};
   var p=document.createElement('pre'); p.id='probe';
   p.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0';
