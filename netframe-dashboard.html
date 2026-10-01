@@ -422,7 +422,7 @@ function nfmConditions(m, wan, nowSec){
 /* Measured domains this wall does not cover at all: shown as NOT MEASURED, never as healthy. */
 function nfmNotMeasured(m){
   const nm=['storage (ZFS)','UPS shutdown budget','battery health'];
-  (m.services||[]).forEach(v=>{ if(v.s==='u') nm.push(v.n+' (no probe)'); });
+  (m.services||[]).forEach(v=>{ if(v.s==='u') nm.push(v.n+' (no check reported)'); });
   (m.integrity||[]).forEach(c=>{ if(nfmObj(c) && c.s==='u') nm.push(String(c.k)); });
   return nm;
 }
@@ -796,7 +796,7 @@ function renderRail(m, wan){
      <div class="mono" style="font-size:16px;color:${wan.color};letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${E(wan.label)}</div>
      <div class="note" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${E(wan.sub)}${isStale(m,'opnsense')?' · '+E(staleNote(m,'opnsense')):''}</div>`);
   const S=m.services, cnt=k=>S?S.filter(v=>v.s===k).length:0;
-  const svc=panel('Services', S?`${cnt('g')} OK · ${cnt('r')} DOWN · ${cnt('u')} NOT PROBED`:'NOT REPORTED',
+  const svc=panel('Services', S?`${cnt('g')} OK · ${cnt('r')} DOWN · ${cnt('u')} NOT MEASURED`:'NOT REPORTED',
     S?`<div class="svc">${S.map(v=>`<div class="row"><span class="dot ${v.s}"></span><span style="color:${v.s==='r'?'var(--red)':(v.s==='u'?'var(--dim)':'var(--ink)')}">${E(v.n)}${v.s==='u'?' ?':''}</span></div>`).join('')}</div>`
      :'<div class="offline"><div class="big2">NOT REPORTED</div><div>service checks missing</div></div>');
   const p=m.piholeStats, ph=m.pihole;

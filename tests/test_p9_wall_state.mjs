@@ -132,7 +132,7 @@ const lamp = (v, k) => v.lamps.find(l => l.key === k);
   chk('C: a stale source is listed as unknown TELEMETRY, not as a warning', st.conds.some(c => c.dom === 'TELEMETRY' && c.sev === 'u') && !st.conds.some(c => c.sev === 'y'));
   const lk = view(snap(s => { s.nodes.pve2.st = 'r'; s.panels.prometheus.state = 'STALE'; s.panels.prometheus.age = 300; s.panels.prometheus.fresh_at = s.ts - 300; s.mode = 'DEGRADED'; }));
   chk('C: a fault from carried data says LAST KNOWN with its age', /LAST KNOWN 5m/.test(lk.conds.find(c => c.sys === 'pve2').text));
-  chk('C: unprobed services are listed as NOT MEASURED, not as healthy', F.nfmNotMeasured(F.nfmModel(snap())).some(x => /OPNsense \(no probe\)/.test(x)));
+  chk('C: services with no reporting check are listed as NOT MEASURED (no check reported), not as healthy', F.nfmNotMeasured(F.nfmModel(snap())).some(x => x === 'OPNsense (no check reported)'));
 }
 
 /* ---------------------------------------------------------------- D: WAN propagation */
