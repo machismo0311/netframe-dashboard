@@ -1,0 +1,74 @@
+{
+  "_comment": "SANITIZED sample of /api/state. Shape and values follow the live Pi snapshot captured 2026-09-30 (serve.py 58bb84d plus this branch's additions: ups_status, collector); addresses are placeholders. ts/fresh_at/observed_at are rewritten to 'now' by the tests and the render harness.",
+  "ts": 1790821092.1,
+  "mode": "LIVE",
+  "ok": true,
+  "has_error": false,
+  "sources": {"prometheus": true, "ups": true, "pihole": true, "monitor": true, "gpu": true, "slurm": true, "k8s": true, "pihole_api": true, "opnsense": true, "switch": true},
+  "panels": {
+    "prometheus": {"state": "FRESH", "age": 0, "error": null, "src": "prometheus", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "ups":        {"state": "FRESH", "age": 0, "error": null, "src": "ups", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "pihole":     {"state": "FRESH", "age": 0, "error": null, "src": "pihole", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "monitor":    {"state": "FRESH", "age": 240, "error": null, "src": "monitor", "observed_at": 1790821092, "fresh_at": 1790820852.1},
+    "gpu":        {"state": "FRESH", "age": 0, "error": null, "src": "gpu", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "slurm":      {"state": "FRESH", "age": 0, "error": null, "src": "slurm", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "k8s":        {"state": "FRESH", "age": 0, "error": null, "src": "k8s", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "pihole_api": {"state": "FRESH", "age": 0, "error": null, "src": "pihole_api", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "opnsense":   {"state": "FRESH", "age": 0, "error": null, "src": "opnsense", "observed_at": 1790821092, "fresh_at": 1790821092.1},
+    "switch":     {"state": "FRESH", "age": 0, "error": null, "src": "switch", "observed_at": 1790821092, "fresh_at": 1790821092.1}
+  },
+  "nodes": {
+    "QuarkyLab": {"cpu": 2.0, "ramU": 4.1, "disk": 43.0, "st": "g", "gpu": {"temps": [34], "util": 0, "vramU": 0.0, "vram": 45}},
+    "Jarvis":    {"cpu": 5.6, "ramU": 7.7, "disk": 38.4, "st": "g", "gpu": {"temps": [44, 44], "util": 0, "vramU": 0.0, "vram": 48}},
+    "Randy":     {"cpu": 2.0, "ramU": 19.2, "disk": 41.3, "st": "g"},
+    "pve2":      {"cpu": 2.4, "ramU": 20.4, "disk": 29.3, "st": "g"},
+    "pve3":      {"cpu": 3.8, "ramU": 21.6, "disk": 27.1, "st": "g"},
+    "pve4":      {"cpu": 7.4, "ramU": 6.7, "disk": 22.3, "st": "g"},
+    "pve5":      {"cpu": 3.4, "ramU": 15.2, "disk": 19.8, "st": "g"},
+    "pve1":      {"cpu": 3.2, "ramU": 14.8, "disk": 21.1, "st": "g"}
+  },
+  "ups": {"midatlantic": {"load": 39.0, "batt": 100.0, "runtime": 29}, "tripplite": {"load": 58.0, "batt": 100.0, "runtime": 9}},
+  "ups_status": {"verdict": "OK", "reporting": 2, "units": {"midatlantic": {"status": "OL"}, "tripplite": {"status": "OL"}}},
+  "pihole": {"primary": 1, "secondary": 1},
+  "pihole_stats": {"blocked": 17.0, "total": 94498, "qpm": 117},
+  "integrity": [
+    {"k": "Backup Verify", "v": "PASS", "s": "g"},
+    {"k": "Hardening Drift", "v": "NONE", "s": "g"},
+    {"k": "Exposure Guard", "v": "401 ENFORCED", "s": "g"},
+    {"k": "Journal Errors", "v": "239", "s": "g"},
+    {"k": "Auth Failures", "v": "0", "s": "g"},
+    {"k": "LLM Router", "v": "CONFORMANT", "s": "g"},
+    {"k": "NPM DNS", "v": "0 MISSING", "s": "g"},
+    {"k": "Net Dead-man", "v": "FLOW 6227", "s": "g"},
+    {"k": "SMART Trend", "v": "STABLE", "s": "g"},
+    {"k": "Wazuh SIEM", "v": "CORE OK", "s": "g"}
+  ],
+  "services": [
+    {"n": "Proxmox Backup", "h": "Randy:8007", "s": "g"},
+    {"n": "OPNsense", "h": "VM100·pve2", "s": "u"},
+    {"n": "Pi-hole (pri)", "h": "pve1·.177", "s": "g"},
+    {"n": "Pi-hole (sec)", "h": "pve5·.178", "s": "g"},
+    {"n": "Grafana", "h": "CT103·pve4", "s": "g"},
+    {"n": "Wazuh SIEM", "h": "VM104·.184", "s": "g"},
+    {"n": "Headscale", "h": "pve5·.186", "s": "g"},
+    {"n": "Vaultwarden", "h": "CT102·pve3", "s": "g"},
+    {"n": "Ollama · Qwen72B", "h": "Jarvis·GPU", "s": "g"},
+    {"n": "Open WebUI", "h": "CT107·.185", "s": "g"},
+    {"n": "Jellyfin", "h": "Randy:8096", "s": "u"},
+    {"n": "Home Assistant", "h": "VM110·pve5", "s": "g"}
+  ],
+  "k8s": {"nodes": 4, "ready": 4, "gpuop": "DEFERRED", "pods": 46, "podsTotal": 49},
+  "network": {"up": 11, "ports": 51, "tenG": 3, "in_mbps": 2.6, "out_mbps": 2.7},
+  "slurm": {"running": [], "pending": [], "partitions": "student* · research", "node": "QuarkyLab"},
+  "gpus": [
+    {"host": "Jarvis", "card": "2× Quadro RTX 6000", "temps": [44, 44], "util": 0, "vramU": 14, "vram": 49152, "watts": 127.6},
+    {"host": "QuarkyLab", "card": "Quadro RTX 8000", "temps": [34], "util": 0, "vramU": 1, "vram": 46080, "watts": 4.3}
+  ],
+  "opnsense": {
+    "wan1": {"state": "UP", "down_bps": 3461584, "up_bps": 412000, "ip": "WAN1-ADDR", "gw": "Online", "lat": 32.0, "loss": 0.0, "monitor": "MONITOR-A", "gw_addr": "GW-A"},
+    "wan2": {"state": "UP", "down_bps": 380, "up_bps": 120, "ip": "WAN2-ADDR", "gw": "Online", "lat": 52.8, "loss": 0.0, "monitor": "MONITOR-B", "gw_addr": "GW-B"},
+    "states": 938,
+    "failover": {"armed": true, "observed_at": 1790820994.2, "group": "Failover", "tiers": 2, "active": "wan1", "active_netif": "vtnet0"}
+  },
+  "collector": {"finished_at": 1790820852.1, "started_at": 1790820780.0, "duration_s": 72.1, "max_age_s": 2100}
+}

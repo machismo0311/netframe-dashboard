@@ -271,10 +271,71 @@
   .pdim{color:var(--dim);font-size:10.5px}
   .pnote{color:var(--dim);font-size:10px;letter-spacing:.02em;margin-top:1px}
   .pfoot{color:var(--dim);font-size:10px;letter-spacing:.06em;margin-top:3px}
+
+  /* ---- wall trustworthiness: correctness + visibility (no theme change) ---- */
+  html,body{display:block}
+  #stage{position:absolute;left:0;top:0;transform-origin:0 0}
+  .dot.u{background:transparent;border:2px dashed #8b9ea3;box-shadow:none;animation:none}
+  .c-unk{color:#8b9ea3}
+  .nodata{color:var(--dim);font-family:var(--font-mono);letter-spacing:.08em}
+  .inv{font-family:var(--font-mono);font-size:9px;color:var(--dim);letter-spacing:.05em}
+  .inv::before{content:"INVENTORY · ";color:var(--violet)}
+
+  /* four status lamps replace the two header badges; each has its own source and its own flag */
+  .hlamps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;flex:1;margin:0 10px;min-width:0}
+  .hl{position:relative;border:1px solid var(--line2);padding:3px 10px 3px 13px;min-width:0;
+    background:linear-gradient(180deg,var(--panel),var(--panel2));
+    clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))}
+  .hl::before{content:"";position:absolute;left:0;top:4px;bottom:4px;width:4px;background:var(--c);box-shadow:0 0 8px var(--c)}
+  .hl .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;color:var(--dim);display:flex;align-items:center;gap:6px}
+  .hl .v{font-size:21px;font-weight:700;line-height:1.05;color:var(--c);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hl .w{font-family:var(--font-mono);font-size:11px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hl.crit{animation:critpulse 1.1s infinite;border-color:rgba(255,42,109,.6)}
+  .hl.unk{border-style:dashed}
+  /* heartbeat: blips ONLY when a snapshot with a newer ts arrives; frozen otherwise */
+  .hb{width:8px;height:8px;border-radius:50%;border:1px solid var(--dim);display:inline-block;margin-left:auto;--hbc:var(--green)}
+  .hb.blip{animation:hbblip 1.2s ease-out 1}
+  @keyframes hbblip{0%{background:var(--hbc);box-shadow:0 0 12px var(--hbc);transform:scale(1.7)}100%{background:transparent;box-shadow:none;transform:scale(1)}}
+
+  /* telemetry overlay: the instrument's warning flag */
+  #overlay{display:none;position:absolute;z-index:70;flex-direction:column;align-items:center;gap:6px;
+    padding:16px 40px;background:rgba(4,13,20,.93);border:2px solid var(--red);transform:translate(-50%,-50%);
+    clip-path:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,20px 100%,0 calc(100% - 20px));
+    box-shadow:0 0 30px rgba(255,42,109,.35);max-width:1300px}
+  #overlay.on{display:flex}
+  #overlay .a{font-size:46px;font-weight:700;color:var(--red);letter-spacing:.12em;text-shadow:0 0 18px rgba(255,42,109,.6)}
+  #overlay .b{font-family:var(--font-mono);font-size:16px;color:var(--ink);letter-spacing:.06em;text-align:center}
+  #overlay.amber{border-color:var(--yellow);box-shadow:0 0 30px rgba(252,238,10,.25)}
+  #overlay.amber .a{color:var(--yellow);text-shadow:0 0 18px rgba(252,238,10,.5)}
+  .lostlink #summary,.lostlink #integrity,.lostlink #main{filter:grayscale(.85) brightness(.55)}
+  .lostlink .dot{animation:none!important}
+
+  /* the beam is decoration gated by liveness: full while LIVE, faint while PARTIAL, gone otherwise */
+  .beam-partial #beam{opacity:.5;animation-duration:14s}
+  .beam-off #beam{display:none}
+
+  #demowm{display:none;position:absolute;inset:0;z-index:80;pointer-events:none;place-items:center}
+  .demo #demowm{display:grid}
+  #demowm span{font:800 120px var(--font-display);color:rgba(255,123,0,.18);transform:rotate(-12deg);letter-spacing:.1em}
+
+  /* reserved space: with an incident or proposal strip shown, the lower-priority bands condense
+     instead of pushing the estate off the stage */
+  .strips #summary,.strips #gpustrip,.strips #slurm{display:none}
+  .strips#stage{grid-template-rows:66px 46px auto auto minmax(0,1fr)}
+  .strips #main{grid-template-rows:minmax(0,1fr) auto}
+  .strips #botband{grid-row:2}
+
+  /* every service row stays visible: the panel gets a floor, and the WAN/DNS row gives way first */
+  #rail{grid-template-rows:auto minmax(132px,auto) minmax(0,1fr) auto}
+  .svcrows{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1px 12px}
+  .svcrows .row{font-size:11.5px;line-height:15px}
+  .segbar i.s{background:var(--yellow);box-shadow:0 0 5px var(--yellow)}
+  .segbar i.m{background:transparent;outline:1px dashed #8b9ea3}
 </style>
 
 <div id="stage">
   <div id="beam"></div>
+  <div id="demowm"><span>DEMO DATA · NOT LIVE</span></div>
 
   <!-- HEADER -->
   <div id="head">
@@ -285,10 +346,7 @@
         <div class="s">KM-CLUSTER · OPERATIONS CENTER</div>
       </div>
     </div>
-    <div class="hbadges">
-      <div class="badge warn" id="modebadge"><span class="dot y"></span>CONNECTING</div>
-      <div class="badge ok" id="hstatus"><span class="dot g"></span>ALL SYSTEMS NOMINAL</div>
-    </div>
+    <div class="hlamps" id="lamps"></div>
     <div class="clock">
       <div class="tm" id="clk">--:--:--</div>
       <div class="dt" id="cdate">----</div>
@@ -329,340 +387,466 @@
     <div id="botband"></div>
   </div>
 
+  <div id="overlay"><div class="a" id="ovA"></div><div class="b" id="ovB"></div></div>
+
   <div id="footer">
-    <span id="floc">VERMILION, OH · NETFRAME CS9000 42U · 7-NODE PROXMOX VE 9.2.3</span>
-    <span id="fhw">RTX 8000 48GB · 2× RTX 6000 48GB · 96GB VRAM · 1168GB RAM · 224 THREADS</span>
+    <span><b class="c-violet" style="font-weight:400">INVENTORY</b> · VERMILION, OH · NETFRAME CS9000 42U · 7-NODE PROXMOX VE 9.2.3 · ENV SENSOR NOT INSTALLED</span>
+    <span><b class="c-violet" style="font-weight:400">INVENTORY</b> · RTX 8000 48GB · 2× RTX 6000 48GB · RX 580 PLANNED · 1168GB RAM · 224 THREADS</span>
   </div>
 </div>
 
 <script>
 /* ============================================================================
-   DATA MODEL — one object per panel. Phase 2: replace mock values with
-   fetch('/api/<source>') on a poll interval; render functions stay identical.
+   NetFRAME wall. NO production value on this screen is ever simulated: an absent measurement
+   renders as "—" / NOT MEASURED, and fixed facts render labelled INVENTORY. Demo data exists only
+   behind ?demo=1, under a full-screen DEMO watermark, and never mixes with a live feed.
    ============================================================================ */
-const rnd=(a,b)=>a+Math.random()*(b-a);
-const jit=(v,d,lo,hi)=>Math.max(lo,Math.min(hi,v+rnd(-d,d)));
-const spark=()=>Array.from({length:16},()=>rnd(10,100));
+const el=id=>document.getElementById(id);
 
-const DATA={
-  // --- 7 cluster nodes + pve1 standalone ---
+/* NFM-INVENTORY-BEGIN  DECLARED INVENTORY - never a measurement; rendered with an INVENTORY label.
+   Sources: Home-Lab topology/inventory.yml and vault/Power Distribution.md. */
+const NFM_INV={
   nodes:[
-    {host:'QuarkyLab',hw:'R730 · 2×E5-2699v4',role:'ML / SLURM',rc:'st',ram:512,ramU:41,cpu:22,disk:34,vms:1,st:'g',
-     gpu:{name:'RTX 8000 48GB',vram:46,vramU:12,util:8,temps:[33]}},
-    {host:'Jarvis',hw:'R730 · 2×E5-2687Wv4',role:'LLM · Ollama',rc:'',ram:384,ramU:24,cpu:14,disk:22,vms:0,st:'g',
-     gpu:{name:'2× RTX 6000',vram:48,vramU:31,util:0,temps:[41,36]}},
-    {host:'Randy',hw:'Supermicro · PBS',role:'STORAGE · RKE2',rc:'stor',ram:128,ramU:17,cpu:9,disk:58,vms:0,st:'g',gpu:null},
-    {host:'pve2',hw:'EliteDesk G4 · i7-8700',role:'OPNSENSE',rc:'',ram:32,ramU:22,cpu:31,disk:41,vms:1,st:'g',gpu:null},
-    {host:'pve3',hw:'EliteDesk G4 · i7-8700',role:'CORE / RKE2',rc:'',ram:48,ramU:19,cpu:18,disk:37,vms:5,st:'g',gpu:null},
-    {host:'pve4',hw:'EliteDesk G3m · i5-7500T',role:'RKE2 CP',rc:'',ram:32,ramU:26,cpu:22,disk:44,vms:2,st:'g',gpu:null},
-    {host:'pve5',hw:'EliteDesk G3m · i5-7500T',role:'RKE2 CP',rc:'',ram:32,ramU:28,cpu:16,disk:39,vms:4,st:'g',gpu:null},
-    {host:'pve1',hw:'Mac Mini · standalone',role:'PI-HOLE',rc:'',ram:16,ramU:34,cpu:12,disk:29,vms:1,st:'v',standalone:true,gpu:null},
-  ],
-  integrity:[
-    {k:'Backup Verify',v:'OK · 6h',s:'g'},
-    {k:'Hardening Drift',v:'NONE',s:'g'},
-    {k:'Exposure Guard',v:'401 ENFORCED',s:'g'},
-    {k:'Journal Errors',v:'0',s:'g'},
-    {k:'Auth Failures',v:'0',s:'g'},
-    {k:'LLM Router',v:'CONFORMANT',s:'g'},
-    {k:'NPM DNS',v:'0 MISSING',s:'g'},
-    {k:'Net Dead-man',v:'FLOW OK',s:'g'},
-    {k:'Capacity',v:'180d → 90%',s:'g'},
-    {k:'SMART Trend',v:'STABLE',s:'g'},
+    {host:'QuarkyLab',hw:'R730 · 2×E5-2699v4',role:'ML / SLURM',rc:'st',ram:512,gpu:'RTX 8000 48GB'},
+    {host:'Jarvis',hw:'R730 · 2×E5-2687Wv4',role:'LLM · OLLAMA',rc:'',ram:384,gpu:'2× RTX 6000'},
+    {host:'Randy',hw:'Supermicro · PBS',role:'STORAGE · RKE2',rc:'stor',ram:128},
+    {host:'pve2',hw:'EliteDesk G4 · i7-8700',role:'OPNSENSE',rc:'',ram:32},
+    {host:'pve3',hw:'EliteDesk G4 · i7-8700',role:'CORE / RKE2',rc:'',ram:48},
+    {host:'pve4',hw:'EliteDesk G3m · i5-7500T',role:'RKE2 CP',rc:'',ram:32},
+    {host:'pve5',hw:'EliteDesk G3m · i5-7500T',role:'RKE2 CP',rc:'',ram:32},
+    {host:'pve1',hw:'Mac Mini · standalone',role:'PI-HOLE',rc:'',ram:16,standalone:true},
   ],
   ups:[
-    {name:'Middle Atlantic',model:'UPS-OL2200R',va:2200,load:38,batt:100,runtime:41,feeds:'R730s · Randy · DS4246'},
-    {name:'Tripp Lite',model:'SMART1500VA',va:1500,load:29,batt:100,runtime:52,feeds:'EX3400 · UniFi · compute'},
+    {key:'midatlantic',name:'Middle Atlantic',model:'UPS-OL2200R',feeds:'QuarkyLab · Jarvis · Randy · DS4246'},
+    {key:'tripplite',name:'Tripp Lite',model:'SMART1500VA',feeds:'EX3400 · UniFi · pve1–5 · wall Pi'},
   ],
-  services:[
-    {n:'Proxmox Backup',h:'Randy:8007',s:'g'},{n:'OPNsense',h:'VM100·pve2',s:'g'},
-    {n:'Pi-hole (pri)',h:'pve1·.177',s:'g'},{n:'Pi-hole (sec)',h:'pve5·.178',s:'g'},
-    {n:'Grafana',h:'CT103·pve4',s:'g'},{n:'Wazuh SIEM',h:'VM104·.184',s:'g'},
-    {n:'Headscale',h:'pve5·.186',s:'g'},{n:'Vaultwarden',h:'CT102·pve3',s:'g'},
-    {n:'Ollama · Qwen72B',h:'Jarvis·GPU',s:'g'},{n:'Open WebUI',h:'CT107·.185',s:'g'},
-    {n:'Jellyfin',h:'Randy:8096',s:'g'},{n:'Home Assistant',h:'VM110·pve5',s:'y'},
-  ],
-  pihole:{blocked:18.4,qpm:242,total:1284309,upstreams:2},
-  opnsense:{
-    wan1:{name:'WAN1 · Spectrum',state:'UP',role:'PRIMARY',down:spark(),up:spark(),lat:8.4},
-    wan2:{name:'WAN2 · FirstNet 5G',state:'STANDBY',role:'FAILOVER',down:spark(),up:spark(),lat:44.2},
-    states:8421,gw:'gwgroup OK',
-  },
-  k8s:{name:'RKE2',nodes:4,ready:4,pods:63,cp:'.54:6443',cni:'Cilium',lb:'MetalLB .71-75',gpuop:'DEFERRED'},
-  env:null, // sensor not wired
-  slurm:{
-    partitions:'student* (2h) · research (∞)', node:'QuarkyLab',
-    users:[{u:'kyle',c:'cyan'},{u:'fernanda',c:'violet'}],
-    running:[
-      {id:'1042',u:'fernanda',c:'violet',name:'dune-rag-train',gpu:'rtx8000:1',el:'2:14:07'},
-      {id:'1043',u:'kyle',c:'cyan',name:'qwen-eval',gpu:'—',el:'0:41:22'},
-      {id:'1044',u:'fernanda',c:'violet',name:'vecstore-embed',gpu:'rtx8000:1',el:'0:12:55'},
-    ],
-    pending:[
-      {id:'1045',u:'researcher02',name:'hadd-sim',rs:'Resources',wait:'0:03:11'},
-      {id:'1046',u:'student07',name:'nb-gpu-lab',rs:'Priority',wait:'0:07:48'},
-    ],
-  },
-  gpus:[
-    {host:'QuarkyLab',card:'Quadro RTX 8000',vram:46080,vramU:11800,util:8,watts:64,temps:[33]},
-    {host:'Jarvis',card:'2× Quadro RTX 6000',vram:49152,vramU:31700,util:0,watts:103,temps:[41,36]},
-    {host:'R730xd (planned)',card:'RX 580 8GB',planned:true},
-  ],
-  storage:{
-    pools:[{n:'datastore',cap:23000,used:4300,h:'ONLINE'},{n:'bulk (DS4246)',cap:56000,used:12100,h:'ONLINE'}],
-    // No jbod count and no smart health are seeded here any more. Both were static literals
-    // rendered with live-health semantics, while /api/state carries no smart or jbod field
-    // and serve.py has no collector for either. The wall must not assert measurements that
-    // no probe supplies.
-    jbodConfigured:22,   // DECLARED INVENTORY, not a live reading - rendered as such
-  },
-  network:{
-    sw:'EX3400-48P', up:41, ports:48, tenG:3, vlans:7,
-    links:[{n:'Randy xe-0/2/0',s:'10G'},{n:'QuarkyLab xe-0/2/1',s:'10G'},{n:'Jarvis xe-0/2/2',s:'10G'}],
-  },
-  power:{
-    feeds:[{n:'Middle Atlantic',w:752},{n:'Tripp Lite',w:392}],
-    gpuW:167, apc:'MGMT CARD FAILED',
-  },
+  gpuCards:{QuarkyLab:'Quadro RTX 8000',Jarvis:'2× Quadro RTX 6000'},
+  plannedGpu:{host:'R730xd (planned)',card:'RX 580 8GB'},
+  wan:{wan1:{name:'WAN1 · Spectrum',role:'PRIMARY'},wan2:{name:'WAN2 · FirstNet 5G',role:'FAILOVER'}},
+  k8s:{cp:'.54:6443',cni:'Cilium',lb:'MetalLB .71-75'},
+  sw:'EX3400-48P', jbodConfigured:22,   // DS4246 drive bays populated: DECLARED, not a live reading
 };
+/* Mirrors the EXISTING Grafana ups-power rules (netframe-monitoring-stack alert-rules.yaml:
+   "UPS runtime low" runtime < 300 s, "UPS battery low" charge < 50 %). The wall marks the same
+   condition those rules page on; it does not invent a limit of its own. */
+const NFM_UPS_ALERT={runtime_min:5, charge_pct:50};
+/* NFM-INVENTORY-END */
+
+/* NFM-MODEL-BEGIN  (pure; offline-tested by tests/test_p9_wall_state.mjs)
+   The snapshot is the only source of measurements. Anything it does not carry is null, which every
+   renderer shows as "—" / NOT MEASURED. Nothing is kept from a previous mock, because there is none. */
+function nfmNum(v){ return (typeof v==='number' && isFinite(v)) ? v : null; }
+function nfmObj(v){ return (v && typeof v==='object' && !Array.isArray(v)) ? v : null; }
+function nfmModel(s){
+  s=nfmObj(s)||{};
+  const m={ts:nfmNum(s.ts), mode:typeof s.mode==='string'?s.mode:null, panels:nfmObj(s.panels)||{},
+    nodes:{}, ups:{}, upsStatus:nfmObj(s.ups_status), integrity:Array.isArray(s.integrity)?s.integrity:null,
+    services:null, pihole:nfmObj(s.pihole), piholeStats:nfmObj(s.pihole_stats), opn:nfmObj(s.opnsense),
+    k8s:nfmObj(s.k8s), slurm:nfmObj(s.slurm), gpus:Array.isArray(s.gpus)?s.gpus:null,
+    network:nfmObj(s.network), collector:nfmObj(s.collector)};
+  NFM_INV.nodes.forEach(n=>{ const L=nfmObj(s.nodes&&s.nodes[n.host])||{};
+    m.nodes[n.host]={cpu:nfmNum(L.cpu), ramU:nfmNum(L.ramU), disk:nfmNum(L.disk),
+      st:['g','y','r'].indexOf(L.st)>=0?L.st:null, gpu:nfmObj(L.gpu)}; });
+  NFM_INV.ups.forEach(u=>{ const L=nfmObj(s.ups&&s.ups[u.key])||{};
+    m.ups[u.key]={load:nfmNum(L.load), batt:nfmNum(L.batt), runtime:nfmNum(L.runtime)}; });
+  if(Array.isArray(s.services)){
+    m.services=s.services.filter(x=>nfmObj(x)).map(x=>({n:String(x.n), h:String(x.h||''),
+      s:['g','y','r','u'].indexOf(x.s)>=0?x.s:'u'}));
+    /* Pi-hole up/down from Prometheus (pihole-dns job) is a second, independent measurement */
+    const p=m.pihole;
+    if(p) m.services.forEach(v=>{
+      if(v.n==='Pi-hole (pri)' && (p.primary===0||p.primary===1)) v.s=p.primary?'g':'r';
+      if(v.n==='Pi-hole (sec)' && (p.secondary===0||p.secondary===1)) v.s=p.secondary?'g':'r'; });
+  }
+  return m;
+}
+/* UPS state: utility/battery status from the collector's upsc check, load/charge/runtime from
+   Prometheus. Below the existing alert limits is critical, exactly as Grafana would page. */
+function nfmUpsState(m, key){
+  const u=m.ups[key]||{load:null,batt:null,runtime:null};
+  const unit=m.upsStatus && m.upsStatus.units && m.upsStatus.units[key];
+  const raw=(unit && typeof unit.status==='string') ? unit.status : null;
+  const tok=raw ? raw.split(/\s+/) : [];
+  let sev='u', label='STATUS UNKNOWN';
+  if(tok.indexOf('LB')>=0){ sev='r'; label='LOW BATTERY'; }
+  else if(tok.indexOf('OB')>=0){ sev='y'; label='ON BATTERY'; }
+  else if(tok.indexOf('OL')>=0){ sev='g'; label='ON LINE'; }
+  else if(raw){ label=raw; }
+  const below=(u.runtime!==null && u.runtime<NFM_UPS_ALERT.runtime_min) || (u.batt!==null && u.batt<NFM_UPS_ALERT.charge_pct);
+  if(below) sev='r';
+  return {sev:sev, label:label, raw:raw, below:below, load:u.load, batt:u.batt, runtime:u.runtime};
+}
+/* NFM-MODEL-END */
+
+/* NFM-CONDITIONS-BEGIN  (pure; offline-tested by tests/test_p9_wall_state.mjs)
+   One entry per INDEPENDENT condition, each naming its own system and source. Nothing is merged,
+   deduplicated or explained by an assumed cause: the wall does not know why pve3 is down, so it says
+   "cause not determined". A placement fact is shown only from declared inventory, labelled as such. */
+function nfmConditions(m, wan){
+  const out=[], P=m.panels||{};
+  const tag=src=>{ const p=P[src]; return (p && p.state && p.state!=='FRESH') ? ' · LAST KNOWN '+nfmAgeText(p.age) : ''; };
+  const add=(sev,dom,sys,text,src)=>out.push({sev:sev, dom:dom, sys:sys, text:text+(src?tag(src):'')});
+  NFM_INV.nodes.forEach(n=>{ if(m.nodes[n.host].st==='r')
+    add('r','NODE',n.host,n.host+' not responding (node-exporter up = 0) · cause not determined','prometheus'); });
+  (m.services||[]).forEach(v=>{
+    if(v.s==='r') add('r','SERVICE',v.n,v.n+' check failing · INVENTORY '+v.h+' · cause not determined','monitor');
+    else if(v.s==='y') add('y','SERVICE',v.n,v.n+' check degraded · INVENTORY '+v.h,'monitor'); });
+  (m.integrity||[]).forEach(c=>{ if(!nfmObj(c)) return;
+    if(c.s==='r') add('r','INTEGRITY',String(c.k),String(c.k)+': '+String(c.v),'monitor');
+    else if(c.s==='y') add('y','INTEGRITY',String(c.k),String(c.k)+': '+String(c.v),'monitor'); });
+  if(wan && wan.state!=='READY'){
+    const sev = wan.color==='var(--red)' ? 'r' : (wan.color==='var(--yellow)' ? 'y' : 'u');
+    add(sev,'WAN','WAN',String(wan.label).replace(/^[▲▼]\s*/,'')+' · '+wan.sub,'opnsense'); }
+  NFM_INV.ups.forEach(u=>{ const x=nfmUpsState(m,u.key);
+    if(x.sev==='r' || x.sev==='y') add(x.sev,'UPS',u.name,u.name+' '+x.label
+      +(x.batt!==null?' · '+Math.round(x.batt)+' %':'')+(x.runtime!==null?' · '+Math.round(x.runtime)+' min':'')
+      +(x.below?' · below existing alert (< 5 min / < 50 %)':''),'ups'); });
+  const us=m.upsStatus;
+  if(us && typeof us.reporting==='number' && us.reporting<NFM_INV.ups.length)
+    add('u','UPS','UPS monitoring','only '+us.reporting+' of '+NFM_INV.ups.length+' UPS units report status','monitor');
+  const k=m.k8s;
+  if(k && typeof k.nodes==='number' && typeof k.ready==='number' && k.ready<k.nodes)
+    add('r','RKE2','RKE2 node',(k.nodes-k.ready)+' of '+k.nodes+' nodes NotReady (Kubernetes API) · cause not determined','k8s');
+  Object.keys(P).sort().forEach(name=>{ const p=P[name]; if(!nfmObj(p) || p.state==='FRESH') return;
+    add('u','TELEMETRY',name,'source '+name+' '+String(p.state)+(p.age!=null?' · '+nfmAgeText(p.age)+' old':'')
+        +(p.error?' · '+String(p.error).slice(0,80):'')); });
+  const rank={r:0,y:1,u:2};
+  return out.map((x,i)=>[x,i]).sort((a,b)=>rank[a[0].sev]-rank[b[0].sev] || a[1]-b[1]).map(a=>a[0]);
+}
+/* Measured domains this wall does not cover at all: shown as NOT MEASURED, never as healthy. */
+function nfmNotMeasured(m){
+  const nm=['storage (ZFS)','UPS shutdown budget','battery health'];
+  (m.services||[]).forEach(v=>{ if(v.s==='u') nm.push(v.n+' (no probe)'); });
+  (m.integrity||[]).forEach(c=>{ if(nfmObj(c) && c.s==='u') nm.push(String(c.k)); });
+  return nm;
+}
+/* NFM-CONDITIONS-END */
+
+/* NFM-LAMPS-BEGIN  (pure; offline-tested by tests/test_p9_wall_state.mjs)
+   Four indications with four sources. Precedence:
+     1. the wall's own link (AWAITING / OFFLINE / STALE / UNKNOWN) makes INFRASTRUCTURE unknown;
+     2. a measured fault always shows (CRITICAL / DEGRADED), even while other sources are blind;
+     3. green "NO FAULTS" requires TELEMETRY CONFIDENCE = CURRENT, otherwise "NO FAULTS SEEN";
+     4. INCIDENT and OWNER REVIEW come from their OWN feeds and freshness rules: losing /api/state
+        never touches them, and they never add to the infrastructure count.
+   OWNER REVIEW severity is the existing nfmProposalState tone, unchanged. */
+function nfmLamps(ds, m, conds, incFeed, propFeed, nowSec){
+  const L=(key,label,sev,value,why)=>({key:key,label:label,sev:sev,value:value,why:why});
+  const names=a=>a.map(x=>x.sys).join(' · ');
+  const crit=conds.filter(c=>c.sev==='r'), warn=conds.filter(c=>c.sev==='y');
+  const P=(m&&m.panels)||{}, pn=Object.keys(P), fresh=pn.filter(n=>P[n] && P[n].state==='FRESH');
+  let conf;
+  if(ds.state==='AWAITING') conf=L('conf','TELEMETRY CONFIDENCE','u','AWAITING','no sample received yet');
+  else if(ds.state==='OFFLINE') conf=L('conf','TELEMETRY CONFIDENCE','r','NO DATA','backend unreachable'+(ds.age!=null?' · last sample '+nfmAgeText(ds.age)+' old':''));
+  else if(ds.state==='STALE') conf=L('conf','TELEMETRY CONFIDENCE','r','STALE','snapshot '+(ds.age!=null?nfmAgeText(ds.age)+' old':'age unknown')+' · '+ds.reason);
+  else if(ds.state==='UNKNOWN') conf=L('conf','TELEMETRY CONFIDENCE','y','UNKNOWN',ds.reason);
+  else if(ds.state==='DEGRADED') conf=L('conf','TELEMETRY CONFIDENCE','y','PARTIAL',fresh.length+'/'+pn.length+' sources current · '
+        +ds.stale.map(n=>n+' '+nfmAgeText(P[n] && P[n].age)).join(' · '));
+  else conf=L('conf','TELEMETRY CONFIDENCE','g','CURRENT','all '+pn.length+' sources fresh'
+        +(m.collector && typeof m.collector.finished_at==='number' ? ' · collector ran '+nfmAgeText(nowSec-m.collector.finished_at)+' ago' : ''));
+  const current=(ds.state==='LIVE' || ds.state==='DEGRADED');
+  let infra;
+  if(!current) infra=L('infra','INFRASTRUCTURE','u','UNKNOWN', crit.length ? 'last known: '+crit.length+' critical · '+names(crit) : 'no current data');
+  else if(crit.length) infra=L('infra','INFRASTRUCTURE','r','CRITICAL',crit.length+' critical: '+names(crit)+(warn.length?' · +'+warn.length+' warning':''));
+  else if(warn.length) infra=L('infra','INFRASTRUCTURE','y','DEGRADED',warn.length+' warning: '+names(warn));
+  else if(conf.sev==='g') infra=L('infra','INFRASTRUCTURE','g','NO FAULTS','in measured domains · some domains not measured');
+  else infra=L('infra','INFRASTRUCTURE','u','NO FAULTS SEEN',(pn.length-fresh.length)+' source(s) not current · cannot confirm');
+  let inc;
+  if(incFeed===undefined) inc=L('inc','INCIDENT','u','AWAITING','incident feed not read yet');
+  else { const d=nfmIncidentState(incFeed, nowSec);
+    if(d.status==='NO_SELECTION') inc=L('inc','INCIDENT','d','NONE SELECTED','no incident selected · not a health claim');
+    else if(d.status==='FEED_UNAVAILABLE' || d.status==='UNSUPPORTED') inc=L('inc','INCIDENT','y',d.status==='UNSUPPORTED'?'UNSUPPORTED':'FEED DOWN',d.reason);
+    else if(d.freshness!=='FRESH') inc=L('inc','INCIDENT','y','NOT CURRENT',(d.banner||'projection not current')+(d.incidentId?' · '+d.incidentId:''));
+    else inc=L('inc','INCIDENT',d.tone==='crit'?'r':(d.tone==='dim'?'d':'y'),d.tone==='dim'?'CLOSED RECORD':'INCIDENT',
+               String(d.incidentId||'UNKNOWN')+' · '+String(d.viewStatus||'')+' · projection fresh'); }
+  let own;
+  if(propFeed===undefined) own=L('own','OWNER REVIEW · SECURITY','u','AWAITING','proposal feed not read yet');
+  else { const d=nfmProposalState(propFeed, nowSec);
+    if(d.status!=='OK') own=L('own','OWNER REVIEW · SECURITY','y','UNKNOWN',String(d.banner||d.status)+' · not zero');
+    else { let old=0; (d.proposals||[]).forEach(p=>{ if(p && typeof p.age_seconds==='number' && p.age_seconds>old) old=p.age_seconds; });
+      own=L('own','OWNER REVIEW · SECURITY', d.tone==='crit'?'r':(d.tone==='warn'?'y':'d'), String(d.action),
+        d.action>0 ? ((d.security?'incl. '+d.security+' Wazuh detections · ':'')+(old?'oldest shown '+nfmAgeText(old):'awaiting owner'))
+                   : 'nothing awaiting an owner'); } }
+  return [infra, conf, inc, own];
+}
+/* NFM-LAMPS-END */
+
+/* NFM-LINK-BEGIN  (pure; offline-tested by tests/test_p9_wall_state.mjs)
+   Request ordering and liveness. A response is applied only if its request was issued after the
+   last applied one (an older, slower answer can never overwrite newer state). A snapshot is NEW only
+   when its ts moved forward; a repeated ts is SAME (no heartbeat). A ts that moved BACKWARDS from a
+   newer request means the backend restarted or its clock was corrected: it is applied, the tracker
+   re-bases on it, and the heartbeat resumes on the next forward step. */
+const NFM_LINK_LOST_S=10;
+function nfmSampleTracker(){ return {lastSeq:0, lastTs:null,
+  accept:function(seq, ts){
+    if(!(seq>this.lastSeq)) return 'DROP';
+    this.lastSeq=seq;
+    if(typeof ts!=='number' || !isFinite(ts)) return 'NO_TS';
+    if(this.lastTs===null || ts>this.lastTs){ this.lastTs=ts; return 'NEW'; }
+    if(ts===this.lastTs) return 'SAME';
+    this.lastTs=ts; return 'REGRESSED'; }}; }
+function nfmLatestGate(){ return {last:0, take:function(seq){ if(!(seq>this.last)) return false; this.last=seq; return true; }}; }
+/* L = {snap, okAt, fails}. The link is lost after 2 consecutive failures or 10 s without a good answer. */
+function nfmLinkState(L, nowSec, bound){
+  if(!L.snap) return (L.fails>=2) ? {state:'OFFLINE', age:null, stale:[], reason:'backend unreachable, no sample yet'}
+                                  : {state:'AWAITING', age:null, stale:[], reason:'awaiting first sample'};
+  const lost = L.fails>=2 || (typeof L.okAt==='number' && nowSec-L.okAt>NFM_LINK_LOST_S);
+  if(lost){ const ts=nfmNum(L.snap.ts);
+    return {state:'OFFLINE', age:(ts!==null && ts<=nowSec+60)?Math.max(0,nowSec-ts):null, stale:[], reason:'backend unreachable'}; }
+  return nfmDisplayState(L.snap, nowSec, bound);
+}
+/* Decoration is never proof of health: the heartbeat blips only for a NEW snapshot that is current;
+   the beam sweeps only while telemetry is current, faintly while partial, and stops otherwise. */
+function nfmHeartbeat(event, state){ if(event!=='NEW') return null; return state==='LIVE' ? 'g' : (state==='DEGRADED' ? 'y' : null); }
+function nfmBeamMode(state){ return state==='LIVE' ? 'live' : (state==='DEGRADED' ? 'partial' : 'off'); }
+/* NFM-LINK-END */
 
 /* ---------------- render helpers ---------------- */
-const el=id=>document.getElementById(id);
+const SEVC={g:'var(--green)',y:'var(--yellow)',r:'var(--red)',u:'#8b9ea3',d:'var(--dim)'};
+const SEVG={g:'✔',y:'⚠',r:'✖',u:'?',d:'○'};
+const E=v=>nfmEsc(v);
+const fmt=(v,dec,unit)=>(v===null || v===undefined || !isFinite(v)) ? '—' : (dec!=null ? Number(v).toFixed(dec) : Math.round(v))+(unit||'');
 const barColor=p=>p>=90?'var(--red)':p>=75?'var(--yellow)':'var(--cyan)';
-function bar(label,val,unit,pct,color){
-  return `<div class="bar" style="--c:${color||barColor(pct)}">
-    <div class="bl"><span>${label}</span><b>${val}${unit||''}</b></div>
-    <div class="track"><div class="fill" style="width:${Math.min(100,pct)}%"></div></div></div>`;
+function bar(label,val,pct,color){
+  const p=(typeof pct==='number' && isFinite(pct)) ? Math.max(0,Math.min(100,pct)) : 0;
+  return `<div class="bar" style="--c:${color||barColor(p)}"><div class="bl"><span>${label}</span><b>${val}</b></div>
+    <div class="track"><div class="fill" style="width:${p}%"></div></div></div>`;
 }
 
 /* ---------------- nodes ---------------- */
-function renderNodes(){
-  el('nodes').innerHTML=DATA.nodes.map(n=>{
-    const cpu=Math.round(n.cpu), ramPct=Math.round(n.ramU);
-    const ramGB=(n.ram*n.ramU/100);
+function renderNodes(m){
+  el('nodes').innerHTML=NFM_INV.nodes.map(n=>{
+    const x=m.nodes[n.host], st=x.st||'u';
+    const ramGB=x.ramU!==null ? n.ram*x.ramU/100 : null;
     let gpu='';
     if(n.gpu){
-      gpu=`<div class="gpublk">
-        <div class="gl"><span>${n.gpu.name}</span><span>${n.gpu.util}%</span></div>
-        ${bar('VRAM', (n.gpu.vramU)+'/'+n.gpu.vram+'G', '', n.gpu.vramU/n.gpu.vram*100,'var(--cyan)')}
-        <div class="temps">${n.gpu.temps.map((t,i)=>`<span class="temp"><i></i>GPU${n.gpu.temps.length>1?i:''} ${Math.round(t)}°</span>`).join('')}</div>
-      </div>`;
+      const g=x.gpu;
+      gpu=g ? `<div class="gpublk"><div class="gl"><span>${E(n.gpu)}</span><span>${fmt(g.util,null,'%')}</span></div>
+        ${bar('VRAM', fmt(g.vramU,1)+'/'+fmt(g.vram,null,'G'), (nfmNum(g.vramU)!==null && nfmNum(g.vram))?g.vramU/g.vram*100:0,'var(--cyan)')}
+        <div class="temps">${(Array.isArray(g.temps)?g.temps:[]).map((t,i,a)=>`<span class="temp"><i></i>GPU${a.length>1?i:''} ${fmt(t,null,'°')}</span>`).join('')}</div></div>`
+        : `<div class="gpublk"><div class="gl"><span>${E(n.gpu)}</span><span class="nodata">NO DATA</span></div></div>`;
     }
-    return `<div class="node ${n.standalone?'standalone':''} ${n.st==='r'?'crit':''}">
-      <div class="nh"><span class="dot ${n.st}"></span><span class="hn">${n.host}</span></div>
-      <div class="hw">${n.hw}</div>
-      <span class="role ${n.rc}">${n.role}</span>
-      ${bar('CPU', cpu+'%', '', cpu)}
-      ${bar('RAM', ramGB.toFixed(0)+'G', '', ramPct)}
-      ${bar('DISK', Math.round(n.disk)+'%', '', n.disk)}
+    return `<div class="node ${n.standalone?'standalone':''} ${st==='r'?'crit':''}">
+      <div class="nh"><span class="dot ${st}"></span><span class="hn">${E(n.host)}</span></div>
+      <div class="hw">${E(n.hw)}</div>
+      <span class="role ${n.rc}">${E(n.role)}</span>
+      ${bar('CPU', fmt(x.cpu,null,'%'), x.cpu)}
+      ${bar('RAM', fmt(ramGB,null,'G'), x.ramU)}
+      ${bar('DISK', fmt(x.disk,null,'%'), x.disk)}
       ${gpu}
-      <div class="vm">${n.standalone?'STANDALONE · not in cluster':'VMs/CT · <b>'+n.vms+'</b>'}</div>
+      <div class="vm">${n.standalone?'STANDALONE · not in cluster':(st==='u'?'<span class="nodata">NO DATA FOR THIS HOST</span>':(st==='r'?'<span class="c-red">NOT RESPONDING</span>':'CLUSTER NODE'))}</div>
     </div>`;
   }).join('');
 }
 
-/* ---------------- summary ---------------- */
+/* ---------------- summary (every KPI is measured; nothing here is a literal) ---------------- */
 const KPIHIST={};
 function sparkSVG(vals){
-  if(!vals||vals.length<2) return '';
-  const w=100,h=30,n=vals.length;
-  const mn=Math.min(...vals),mx=Math.max(...vals),rng=(mx-mn)||1;
-  const pts=vals.map((v,i)=>[i/(n-1)*w, h-2-((v-mn)/rng)*(h-5)]);
-  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
-  const e=pts[pts.length-1];
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
-    <path d="${line} L ${w} ${h} L 0 ${h} Z" fill="#00fff0" fill-opacity="0.14"/>
-    <path d="${line}" fill="none" stroke="#00fff0" stroke-width="1.3" vector-effect="non-scaling-stroke"/>
-    <circle cx="${e[0].toFixed(1)}" cy="${e[1].toFixed(1)}" r="1.7" fill="#00fff0"/></svg>`;
+  const v=vals.filter(x=>typeof x==='number' && isFinite(x));
+  if(v.length<2) return '';
+  const w=100,h=30,n=vals.length, mn=Math.min(...v), mx=Math.max(...v), rng=(mx-mn)||1;
+  let d='', pen=false;
+  vals.forEach((x,i)=>{ if(typeof x!=='number' || !isFinite(x)){ pen=false; return; }
+    const px=(i/(n-1)*w).toFixed(1), py=(h-2-((x-mn)/rng)*(h-5)).toFixed(1);
+    d+=(pen?'L':'M')+px+' '+py+' '; pen=true; });
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="#00fff0" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg>`;
 }
-function renderSummary(){
-  const online=DATA.nodes.filter(n=>!n.standalone).length;
-  const vms=DATA.nodes.reduce((a,n)=>a+(n.standalone?0:n.vms),0)+8;
-  const ramTot=DATA.nodes.filter(n=>!n.standalone).reduce((a,n)=>a+n.ram,0);
-  const ramUsed=DATA.nodes.filter(n=>!n.standalone).reduce((a,n)=>a+n.ram*n.ramU/100,0);
-  const vramTot=96, vramUsed=(DATA.gpus.filter(g=>!g.planned).reduce((a,g)=>a+g.vramU,0)/1024);
-  const run=DATA.slurm.running.length, pend=DATA.slurm.pending.length;
-  const kW=(DATA.power.feeds.reduce((a,f)=>a+f.w,0))/1000;
-  const cards=[
-    {k:'nodes',lab:'NODES ONLINE',val:`${online}<span class="sep">/</span>7`,unit:'',foot:'cluster quorate',n:online},
-    {k:'vms',lab:'ACTIVE VMS / CT',val:vms,unit:'',foot:'6 VM · '+(vms-6)+' LXC',n:vms},
-    {k:'ram',lab:'CLUSTER RAM',val:(ramUsed/1024).toFixed(2),unit:'/ '+(ramTot/1024).toFixed(1)+' TB',foot:Math.round(ramUsed/ramTot*100)+'% committed',n:ramUsed},
-    {k:'vram',lab:'GPU VRAM',val:vramUsed.toFixed(0),unit:'/ 96 GB',foot:Math.round(vramUsed/vramTot*100)+'% · 3 cards',n:vramUsed},
-    {k:'slurm',lab:'SLURM JOBS',val:`${run}<span class="sep">/</span>${pend}`,unit:'',foot:'running / queued',n:run+pend},
-    {k:'power',lab:'TOTAL POWER',val:kW.toFixed(2),unit:'kW',foot:DATA.power.feeds.reduce((a,f)=>a+f.w,0)+' W drawn',n:kW},
+function kpiCards(m){
+  const nodes=NFM_INV.nodes.map(n=>m.nodes[n.host]);
+  const up=nodes.filter(x=>x.st==='g').length, down=nodes.filter(x=>x.st==='r').length, unk=nodes.filter(x=>x.st===null).length;
+  let ramUsed=0, ramTot=0;
+  NFM_INV.nodes.forEach(n=>{ const x=m.nodes[n.host]; if(!n.standalone && x.ramU!==null){ ramUsed+=n.ram*x.ramU/100; ramTot+=n.ram; } });
+  let vU=null, vT=null;
+  if(m.gpus){ vU=0; vT=0; m.gpus.forEach(g=>{ vU+=nfmNum(g.vramU)||0; vT+=nfmNum(g.vram)||0; }); }
+  const s=m.slurm, run=s&&Array.isArray(s.running)?s.running.length:null, pend=s&&Array.isArray(s.pending)?s.pending.length:null;
+  const ups=NFM_INV.ups.map(u=>nfmUpsState(m,u.key)), rts=ups.map(x=>x.runtime).filter(x=>x!==null);
+  const P=m.panels, pn=Object.keys(P), fr=pn.filter(k=>P[k].state==='FRESH').length;
+  return [
+    {k:'nodes',lab:'NODES UP',val:`${up}<span class="sep">/</span>${NFM_INV.nodes.length}`,foot:(down?down+' down · ':'')+(unk?unk+' no data · ':'')+'quorum not measured',n:up},
+    {k:'ram',lab:'CLUSTER RAM USED',val:ramTot?(ramUsed/1024).toFixed(2):'—',unit:ramTot?'/ '+(ramTot/1024).toFixed(1)+' TB':'',foot:ramTot?Math.round(ramUsed/ramTot*100)+'% · capacity is INVENTORY':'not measured',n:ramTot?ramUsed:null},
+    {k:'vram',lab:'GPU VRAM USED',val:vT?(vU/1024).toFixed(0):'—',unit:vT?'/ '+Math.round(vT/1024)+' GB':'',foot:vT?Math.round(vU/vT*100)+'% · '+m.gpus.length+' hosts reporting':'not measured',n:vT?vU/1024:null},
+    {k:'slurm',lab:'SLURM JOBS',val:run===null?'—':`${run}<span class="sep">/</span>${pend}`,foot:'running / queued',n:run===null?null:run+pend},
+    {k:'ups',lab:'UPS RUNTIME (LOWEST)',val:rts.length?Math.round(Math.min(...rts)):'—',unit:rts.length?'min':'',foot:ups.map((x,i)=>NFM_INV.ups[i].name.split(' ')[0]+' '+x.label).join(' · '),n:rts.length?Math.min(...rts):null},
+    {k:'tele',lab:'TELEMETRY SOURCES',val:`${fr}<span class="sep">/</span>${pn.length}`,foot:'fresh this cycle',n:fr},
   ];
-  cards.forEach(c=>{const a=KPIHIST[c.k]||(KPIHIST[c.k]=[]);a.push(c.n);while(a.length>60)a.shift();});
-  el('summary').innerHTML=cards.map(c=>`<div class="kpi"><div class="edge"></div>
-    <div class="spark2">${sparkSVG(KPIHIST[c.k])}</div>
+}
+function recordHistory(m){
+  kpiCards(m).forEach(c=>{ const a=KPIHIST[c.k]||(KPIHIST[c.k]=[]); a.push(c.n); while(a.length>60) a.shift(); });
+  const o=m.opn;
+  ['wan1','wan2'].forEach(k=>{ const v=o && o[k] ? nfmNum(o[k].down_bps) : null;
+    WANHIST[k].push(v); while(WANHIST[k].length>16) WANHIST[k].shift(); });
+}
+function renderSummary(m){
+  el('summary').innerHTML=kpiCards(m).map(c=>`<div class="kpi"><div class="edge"></div>
+    <div class="spark2">${sparkSVG(KPIHIST[c.k]||[])}</div>
     <div class="lab">${c.lab}</div>
     <div class="val">${c.val}${c.unit?'<span class="u">'+c.unit+'</span>':''}</div>
-    <div class="foot">${c.foot}</div></div>`).join('');
+    <div class="foot">${E(c.foot)}</div></div>`).join('');
 }
 
-/* ---------------- rail (ups, services, pihole/opnsense, k8s/env) ---------------- */
-function upsPanel(u){
-  const watts=Math.round(u.load/100*u.va*0.9);
+/* ---------------- rail (ups, services, pihole/opnsense, k8s/collector) ---------------- */
+function upsPanel(m, inv){
+  const x=nfmUpsState(m, inv.key);
   return `<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">${u.name}</span><span class="sub">${u.model}</span></div>
+    <div class="ph"><span class="glyph"></span><span class="t">${E(inv.name)}</span><span class="sub">${E(inv.model)}</span></div>
     <div class="gauge">
-      <div class="ring" style="--p:${u.batt};--c:${u.batt>50?'var(--green)':'var(--yellow)'}"><span>${Math.round(u.batt)}%</span></div>
+      <div class="ring" style="--p:${x.batt===null?0:x.batt};--c:${x.batt===null?'#8b9ea3':(x.batt>50?'var(--green)':'var(--yellow)')}"><span>${fmt(x.batt,null,'%')}</span></div>
       <div style="flex:1">
-        ${bar('LOAD', Math.round(u.load)+'%', '', u.load, u.load>80?'var(--red)':'var(--cyan)')}
-        <div class="metric"><span class="k">DERIVED</span><span class="v c-cyan">${watts} W</span></div>
-        <div class="metric" style="border:none"><span class="k">RUNTIME</span><span class="v">${Math.round(u.runtime)} min</span></div>
+        <div class="mono" style="font-size:11px;color:${SEVC[x.sev]}">${SEVG[x.sev]} ${E(x.label)}</div>
+        ${bar('LOAD', fmt(x.load,null,'%'), x.load, (x.load!==null && x.load>80)?'var(--red)':'var(--cyan)')}
+        <div class="metric" style="border:none"><span class="k">RUNTIME</span><span class="v" style="color:${x.below?'var(--red)':'#eafcff'}">${fmt(x.runtime,null,' min')}</span></div>
       </div>
     </div>
-    <div class="mono" style="font-size:9px;color:var(--dim);letter-spacing:.06em;margin-top:4px">FEEDS: ${u.feeds}</div>
+    <div class="mono" style="font-size:9px;color:var(--dim);letter-spacing:.04em;margin-top:2px">existing alert: &lt; 5 min or &lt; 50 %</div>
+    <div class="inv" style="margin-top:1px">FEEDS ${E(inv.feeds)}</div>
   </div>`;
 }
-function renderRail(){
+function renderRail(m, wan){
+  const S=m.services;
+  const cnt=k=>S?S.filter(v=>v.s===k).length:0;
   const svc=`<div class="panel" style="min-height:0">
-    <div class="ph"><span class="glyph"></span><span class="t">Services</span><span class="sub">${DATA.services.filter(s=>s.s==='g').length}/${DATA.services.length} UP</span></div>
-    <div class="rows" style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2px 14px">
-      ${DATA.services.map(s=>`<div class="row"><span class="dot ${s.s}" style="width:7px;height:7px"></span><span class="nm">${s.n}</span><span class="hostt">${s.h}</span></div>`).join('')}
-    </div></div>`;
+    <div class="ph"><span class="glyph"></span><span class="t">Services</span><span class="sub">${S?cnt('g')+' OK · '+cnt('r')+' DOWN · '+cnt('u')+' NOT PROBED':'NOT REPORTED'}</span></div>
+    <div class="svcrows">${S?S.map(v=>`<div class="row"><span class="dot ${v.s}" style="width:7px;height:7px"></span><span class="nm" style="color:${v.s==='r'?'var(--red)':(v.s==='u'?'var(--dim)':'var(--ink)')}">${E(v.n)}${v.s==='u'?' ?':''}</span></div>`).join('')
+       :'<div class="nodata">service checks not reported</div>'}</div></div>`;
 
-  const p=DATA.pihole;
+  const p=m.piholeStats, ph=m.pihole;
+  const pst=k=>(!ph||(ph[k]!==0&&ph[k]!==1))?'<span class="c-unk">?</span>':(ph[k]?'<span class="c-green">✔</span>':'<span class="c-red">✖</span>');
   const pi=`<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">Pi-hole DNS</span><span class="sub">2 up</span></div>
+    <div class="ph"><span class="glyph"></span><span class="t">Pi-hole DNS</span><span class="sub">PRI ${pst('primary')} SEC ${pst('secondary')}</span></div>
     <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px">
-      <div class="big c-green">${p.blocked.toFixed(1)}%</div>
-      <div class="mono" style="font-size:9px;color:var(--dim)">BLOCKED</div>
-    </div>
-    <div class="metric"><span class="k">QUERIES/MIN</span><span class="v">${Math.round(p.qpm)}</span></div>
-    <div class="metric" style="border:none"><span class="k">TOTAL TODAY</span><span class="v">${p.total.toLocaleString()}</span></div>
+      <div class="big c-green">${fmt(p&&p.blocked,1,'%')}</div><div class="mono" style="font-size:9px;color:var(--dim)">BLOCKED</div></div>
+    <div class="metric"><span class="k">QUERIES/MIN</span><span class="v">${fmt(p&&p.qpm)}</span></div>
+    <div class="metric" style="border:none"><span class="k">TOTAL TODAY</span><span class="v">${p&&nfmNum(p.total)!==null?p.total.toLocaleString():'—'}</span></div>
   </div>`;
 
-  const o=DATA.opnsense;
-  const wanRow=w=>{
-    const online=w.gw?w.gw==='Online':(w.state==='UP');
-    const c=online?'var(--green)':'var(--red)';
-    const detail=online
-      ? `${w.lat!=null?w.lat.toFixed(0)+' ms':'—'}${w.loss?' · '+w.loss+'%':''} · ↓${(w.mbps||0).toFixed(1)}M`
-      : 'NO PATH';
-    return `<div class="wan">
-     <div class="wtop"><span>${w.name}</span>
-       <span class="pill" style="color:${c};border-color:currentColor">${w.role}</span></div>
-     <div class="spark">${w.down.map(v=>`<i style="height:${v}%"></i>`).join('')}</div>
+  const o=m.opn;
+  /* shared scale across both WANs, so 380 bps never looks like 3.4 Mbps; a missing sample is a gap */
+  const mx=Math.max(1,...WANHIST.wan1.concat(WANHIST.wan2).filter(v=>v!==null));
+  const wanRow=k=>{
+    const w=(o&&o[k])||{}, inv=NFM_INV.wan[k];
+    const online=w.gw==='Online', off=w.gw==='Offline';
+    const c=online?'var(--green)':(off?'var(--red)':'#8b9ea3');
+    const detail=online?`${fmt(nfmNum(w.lat),null,' ms')}${w.loss?' · '+w.loss+'%':''} · ↓${fmt(nfmNum(w.down_bps)!==null?w.down_bps/1e6:null,1,'M')}`:(off?'NO PATH':'NOT REPORTED');
+    const h=WANHIST[k];
+    return `<div class="wan"><div class="wtop"><span>${E(inv.name)}</span>
+       <span class="pill" style="color:${c};border-color:currentColor">${inv.role}</span></div>
+     <div class="spark">${h.map(v=>v===null?'<i style="height:100%;background:none;box-shadow:none;border-bottom:1px dashed #8b9ea3"></i>':`<i style="height:${Math.max(3,v/mx*100)}%"></i>`).join('')}</div>
      <div class="mono" style="font-size:9px;color:var(--dim);display:flex;justify-content:space-between;margin-top:2px">
-       <span style="color:${c}">${w.gw||w.state}</span><span>${detail}</span></div></div>`;
+       <span style="color:${c}">${E(w.gw||'UNKNOWN')}</span><span>${detail}</span></div></div>`;
   };
-  const posture=nfmWanPosture(o);
-  const fc=posture.color;
-  const fmsg=posture.label;
   const opn=`<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">OPNsense · Dual-WAN</span><span class="sub">${o.states.toLocaleString()} states</span></div>
-    <div style="display:flex;flex-direction:column;gap:8px">${wanRow(o.wan1)}${wanRow(o.wan2)}</div>
-    <div class="mono" style="font-size:9px;color:${fc};letter-spacing:.06em;margin-top:5px">${fmsg}</div>
-    <div class="mono" style="font-size:8px;color:var(--dim);letter-spacing:.04em;margin-top:1px">${posture.sub}</div>
+    <div class="ph"><span class="glyph"></span><span class="t">OPNsense · Dual-WAN</span><span class="sub">${o&&nfmNum(o.states)!==null?o.states.toLocaleString()+' states':'—'}</span></div>
+    <div style="display:flex;flex-direction:column;gap:6px">${wanRow('wan1')}${wanRow('wan2')}</div>
+    <div class="mono" style="font-size:9px;color:${wan.color};letter-spacing:.06em;margin-top:5px">${E(wan.label)}</div>
+    <div class="mono" style="font-size:8px;color:var(--dim);letter-spacing:.04em;margin-top:1px">${E(wan.sub)}</div>
   </div>`;
 
-  const k=DATA.k8s;
+  const k=m.k8s, ki=NFM_INV.k8s;
   const k8s=`<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">RKE2 Kubernetes</span><span class="sub">${k.cp}</span></div>
+    <div class="ph"><span class="glyph"></span><span class="t">RKE2 Kubernetes</span><span class="sub">${E(ki.cp)}</span></div>
     <div style="display:flex;align-items:center;gap:12px">
-      <div><div class="big c-cyan">${k.ready}/${k.nodes}</div><div class="mono" style="font-size:9px;color:var(--dim)">NODES READY</div></div>
+      <div><div class="big" style="color:${k&&k.ready<k.nodes?'var(--red)':'var(--cyan)'}">${k?k.ready+'/'+k.nodes:'—'}</div><div class="mono" style="font-size:9px;color:var(--dim)">NODES READY</div></div>
       <div style="flex:1">
-        <div class="metric"><span class="k">PODS</span><span class="v">${k.pods}</span></div>
-        <div class="metric"><span class="k">CNI / LB</span><span class="v" style="font-size:10px">${k.cni} · ${k.lb}</span></div>
-        <div class="metric" style="border:none"><span class="k">GPU OPERATOR</span><span class="v c-yellow" style="font-size:10px">${k.gpuop}</span></div>
+        <div class="metric"><span class="k">PODS RUNNING</span><span class="v">${k&&nfmNum(k.pods)!==null?k.pods+(k.podsTotal?'/'+k.podsTotal:''):'—'}</span></div>
+        <div class="metric" style="border:none"><span class="k">GPU OPERATOR</span><span class="v c-yellow" style="font-size:10px">${E(k&&k.gpuop||'—')}</span></div>
+        <div class="inv">${E(ki.cni)} · ${E(ki.lb)}</div>
       </div></div></div>`;
 
-  const env=`<div class="panel" style="min-height:96px">
-    <div class="ph"><span class="glyph"></span><span class="t">Environment</span></div>
-    <div class="offline"><div class="big2">SENSOR OFFLINE</div><div>AWAITING GPIO · DHT22/BME280 TBD</div></div></div>`;
+  const c=m.collector, mp=m.panels.monitor;
+  const now=Date.now()/1000;
+  const coll=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">Collector</span><span class="sub">netframe-monitor</span></div>
+    <div class="big" style="color:${!mp?'#8b9ea3':(mp.state==='FRESH'?'var(--green)':'var(--yellow)')}">${c&&typeof c.finished_at==='number'?nfmAgeText(now-c.finished_at):'—'}</div>
+    <div class="mono" style="font-size:9px;color:var(--dim)">SINCE LAST RUN FINISHED</div>
+    <div class="metric"><span class="k">RUN TOOK</span><span class="v">${c&&nfmNum(c.duration_s)!==null?nfmAgeText(c.duration_s):'—'}</span></div>
+    <div class="metric" style="border:none"><span class="k">DISPLAY LIMIT</span><span class="v">${c&&nfmNum(c.max_age_s)!==null?Math.round(c.max_age_s/60)+' min':'—'}</span></div>
+  </div>`;
 
-  el('rail').innerHTML=`<div class="rail2">${upsPanel(DATA.ups[0])}${upsPanel(DATA.ups[1])}</div>
+  el('rail').innerHTML=`<div class="rail2">${upsPanel(m,NFM_INV.ups[0])}${upsPanel(m,NFM_INV.ups[1])}</div>
     ${svc}
     <div class="rail2" style="grid-template-rows:auto">${pi}${opn}</div>
-    <div class="rail2">${k8s}${env}</div>`;
+    <div class="rail2">${k8s}${coll}</div>`;
 }
 
 /* ---------------- slurm ---------------- */
-function renderSlurm(){
-  const s=DATA.slurm;
-  el('slurmsub').textContent=s.partitions+' · '+s.node;
-  el('slurmusers').innerHTML=s.users.map(u=>`<span class="uchip"><span class="utag" style="background:var(--${u.c});box-shadow:0 0 6px var(--${u.c})"></span>${u.u}</span>`).join('')
-    +`<span class="uchip c-dim" style="margin-left:auto">researcher01-06 · student01-12</span>`;
-  el('runcount').textContent=s.running.length+' active';
-  el('pendcount').textContent=s.pending.length+' queued';
-  el('running').innerHTML=s.running.map(j=>`<div class="job">
-    <span class="id">#${j.id}</span>
-    <span class="usr" style="color:var(--${j.c})"><span class="utag" style="background:var(--${j.c})"></span>${j.name}</span>
-    <span class="g">${j.gpu}</span><span class="el">${j.el}</span></div>`).join('');
-  el('pending').innerHTML=s.pending.map(j=>`<div class="job" style="grid-template-columns:52px 1fr 90px">
-    <span class="id">#${j.id}</span>
-    <span class="usr c-dim" style="font-weight:400">${j.u} · ${j.name}</span>
-    <span class="rs">${j.rs}</span></div>`).join('');
+function renderSlurm(m){
+  const s=m.slurm;
+  el('slurmsub').textContent=s?((s.partitions||'')+' · '+(s.node||'')):'NOT MEASURED';
+  const jobs=s?[].concat(s.running||[],s.pending||[]):[];
+  const users={}; jobs.forEach(j=>{ if(j&&j.u) users[j.u]=j.c||'dim'; });
+  el('slurmusers').innerHTML=Object.keys(users).map(u=>`<span class="uchip"><span class="utag" style="background:var(--${E(users[u])})"></span>${E(u)}</span>`).join('')
+    || `<span class="uchip c-dim">${s?'no jobs':'scheduler not reported'}</span>`;
+  el('runcount').textContent=s?(s.running||[]).length+' active':'—';
+  el('pendcount').textContent=s?(s.pending||[]).length+' queued':'—';
+  el('running').innerHTML=s?(s.running||[]).map(j=>`<div class="job">
+    <span class="id">#${E(j.id)}</span>
+    <span class="usr" style="color:var(--${E(j.c||'dim')})"><span class="utag" style="background:var(--${E(j.c||'dim')})"></span>${E(j.name)}</span>
+    <span class="g">${E(j.gpu)}</span><span class="el">${E(j.el)}</span></div>`).join(''):'';
+  el('pending').innerHTML=s?(s.pending||[]).map(j=>`<div class="job" style="grid-template-columns:52px 1fr 90px">
+    <span class="id">#${E(j.id)}</span><span class="usr c-dim" style="font-weight:400">${E(j.u)} · ${E(j.name)}</span>
+    <span class="rs">${E(j.rs)}</span></div>`).join(''):'';
 }
 
 /* ---------------- gpu strip ---------------- */
-function renderGpu(){
-  el('gpustrip').innerHTML=DATA.gpus.map(g=>{
-    if(g.planned) return `<div class="panel" style="opacity:.55;border-style:dashed">
-      <div class="ph"><span class="glyph" style="background:var(--orange);box-shadow:0 0 8px var(--orange)"></span><span class="t" style="color:var(--orange)">${g.host}</span></div>
-      <div class="offline" style="border-color:rgba(255,123,0,.25)"><div class="big2" style="color:var(--orange)">${g.card}</div><div>SEATED IN FUTURE R730xd · UNPOWERED</div></div></div>`;
-    const vp=g.vramU/g.vram*100;
+function renderGpu(m){
+  const live=m.gpus||[];
+  const card=host=>{ const g=live.find(x=>x&&x.host===host);
+    if(!g) return `<div class="panel"><div class="ph"><span class="glyph"></span><span class="t">${E(host)}</span><span class="sub">${E(NFM_INV.gpuCards[host])}</span></div><div class="offline"><div class="big2">NO DATA</div><div>GPU telemetry not reported</div></div></div>`;
+    const vp=(nfmNum(g.vramU)!==null && nfmNum(g.vram))?g.vramU/g.vram*100:0;
     return `<div class="panel">
-      <div class="ph"><span class="glyph"></span><span class="t">${g.host}</span><span class="sub">${g.card}</span></div>
+      <div class="ph"><span class="glyph"></span><span class="t">${E(host)}</span><span class="sub">${E(g.card||NFM_INV.gpuCards[host])}</span></div>
       <div style="display:flex;gap:14px;align-items:center">
         <div class="temps" style="flex-direction:column;gap:4px">
-          ${g.temps.map((t,i)=>`<span class="temp" style="font-size:15px"><i></i>${g.temps.length>1?'GPU'+i+' ':''}${Math.round(t)}°C</span>`).join('')}
-          <span class="mono c-cyan" style="font-size:13px">${Math.round(g.watts)} W</span>
+          ${(Array.isArray(g.temps)?g.temps:[]).map((t,i,a)=>`<span class="temp" style="font-size:15px"><i></i>${a.length>1?'GPU'+i+' ':''}${fmt(t,null,'°C')}</span>`).join('')}
+          <span class="mono c-cyan" style="font-size:13px">${fmt(g.watts,null,' W')}</span>
         </div>
         <div style="flex:1">
-          ${bar('VRAM',(g.vramU/1024).toFixed(1)+'/'+(g.vram/1024).toFixed(0)+' GB','',vp,'var(--cyan)')}
-          ${bar('UTIL',g.util+'%','',g.util,'var(--green)')}
-        </div>
-      </div></div>`;
-  }).join('');
+          ${bar('VRAM', fmt(nfmNum(g.vramU)!==null?g.vramU/1024:null,1)+'/'+fmt(nfmNum(g.vram)!==null?g.vram/1024:null,0)+' GB', vp, 'var(--cyan)')}
+          ${bar('UTIL', fmt(g.util,null,'%'), g.util, 'var(--green)')}
+        </div></div></div>`; };
+  const pl=NFM_INV.plannedGpu;
+  el('gpustrip').innerHTML=card('QuarkyLab')+card('Jarvis')+`<div class="panel" style="opacity:.55;border-style:dashed">
+      <div class="ph"><span class="glyph" style="background:var(--violet);box-shadow:0 0 8px var(--violet)"></span><span class="t" style="color:var(--violet)">${E(pl.host)}</span></div>
+      <div class="offline" style="border-color:rgba(123,47,255,.3)"><div class="big2" style="color:var(--violet)">${E(pl.card)}</div><div class="inv">PLANNED · UNPOWERED · NOT MONITORED</div></div></div>`;
 }
 
-/* ---------------- bottom band: storage / network / power ---------------- */
-function renderBottom(){
-  const st=DATA.storage, nt=DATA.network, pw=DATA.power;
+/* ---------------- bottom band: storage / network / telemetry pipeline ---------------- */
+function renderBottom(m){
   const storage=`<div class="panel">
     <div class="ph"><span class="glyph"></span><span class="t">Storage · PBS</span><span class="sub">Randy ZFS</span></div>
-    ${st.pools.map(p=>bar(p.n,(p.used/1000).toFixed(1)+'/'+(p.cap/1000).toFixed(0)+' TB','',p.used/p.cap*100,'var(--cyan)')).join('')}
-    <div class="kv2" style="margin-top:5px"><span class="k">DS4246 DRIVES (CONFIGURED)</span><span class="v" style="color:var(--dim)">${st.jbodConfigured} × 4 TB SAS</span></div>
-    <div style="display:flex;gap:7px;margin-top:6px">
-      ${nfmSmartPills(st.smart)}
-    </div></div>`;
-
+    <div class="offline" style="flex:0 0 auto;padding:6px"><div class="big2" style="color:#8b9ea3">? NOT MEASURED</div><div>pool health and capacity have no collector on this wall</div></div>
+    <div class="kv2" style="margin-top:5px"><span class="k">DS4246 DRIVES (CONFIGURED)</span><span class="v" style="color:var(--dim)">${NFM_INV.jbodConfigured} × 4 TB SAS · INVENTORY</span></div>
+    <div style="display:flex;gap:7px;margin-top:6px">${nfmSmartPills(undefined)}</div></div>`;
+  const nt=m.network;
   const network=`<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">Network Fabric</span><span class="sub">${nt.sw}</span></div>
-    <div class="kv2"><span class="k">PORTS ACTIVE</span><span class="v">${nt.up}/${nt.ports}</span></div>
-    <div class="segbar">${Array.from({length:nt.ports},(_,i)=>`<i class="${i<nt.up?'on':''} ${i<nt.tenG?'c':''}"></i>`).join('')}</div>
-    <div class="kv2" style="margin-top:4px"><span class="k">THROUGHPUT</span><span class="v">↓ ${(nt.inMbps||0).toFixed(0)} · ↑ ${(nt.outMbps||0).toFixed(0)} Mbps</span></div>
-    <div class="kv2"><span class="k">10G LINKS UP</span><span class="v c-cyan">${nt.tenG} × DAC</span></div>
-    <div style="margin-top:4px">${nt.links.map(l=>`<div class="kv2"><span class="k">${l.n}</span><span class="v c-cyan">${l.s}</span></div>`).join('')}</div>
-    <div class="kv2" style="margin-top:3px"><span class="k">VLANS</span><span class="v">${nt.vlans} active · 1·20·30·40·50·60·70</span></div>
+    <div class="ph"><span class="glyph"></span><span class="t">Network Fabric</span><span class="sub">${E(NFM_INV.sw)}</span></div>
+    ${nt?`<div class="kv2"><span class="k">PORTS ACTIVE</span><span class="v">${fmt(nt.up)}/${fmt(nt.ports)}</span></div>
+    <div class="segbar">${Array.from({length:Math.max(0,Math.min(96,nfmNum(nt.ports)||0))},(_,i)=>`<i class="${i<nt.up?'on':''} ${i<nt.tenG?'c':''}"></i>`).join('')}</div>
+    <div class="kv2" style="margin-top:4px"><span class="k">THROUGHPUT</span><span class="v">↓ ${fmt(nt.in_mbps)} · ↑ ${fmt(nt.out_mbps)} Mbps</span></div>
+    <div class="kv2"><span class="k">10G LINKS UP</span><span class="v c-cyan">${fmt(nt.tenG)}</span></div>`
+      :'<div class="offline"><div class="big2" style="color:#8b9ea3">NOT REPORTED</div><div>switch telemetry missing this cycle</div></div>'}
   </div>`;
-
-  const gpuW=Math.round(DATA.gpus.filter(g=>!g.planned).reduce((a,g)=>a+g.watts,0));
-  const totalW=pw.feeds.reduce((a,f)=>a+f.w,0);
-  const power=`<div class="panel">
-    <div class="ph"><span class="glyph"></span><span class="t">Power</span><span class="sub">2 UPS · 1 PDU</span></div>
-    <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:3px"><div class="big c-cyan">${(totalW/1000).toFixed(2)}</div><span class="mono c-dim" style="font-size:11px">kW total draw</span></div>
-    ${pw.feeds.map(f=>`<div class="kv2"><span class="k">${f.n}</span><span class="v">${f.w} W</span></div>`).join('')}
-    <div class="kv2"><span class="k">GPU SUBTOTAL</span><span class="v c-orange">${gpuW} W</span></div>
-    <div class="kv2" style="border-top:1px dashed rgba(255,42,109,.25);margin-top:3px;padding-top:4px">
-      <span class="k">APC AP7901 PDU</span><span class="v c-red">${pw.apc}</span></div>
+  const P=m.panels, names=Object.keys(P).sort(), fr=names.filter(k=>P[k].state==='FRESH').length;
+  const pipe=`<div class="panel">
+    <div class="ph"><span class="glyph"></span><span class="t">Telemetry Pipeline</span><span class="sub">${fr}/${names.length} sources fresh</span></div>
+    <div class="segbar" style="height:10px">${names.map(k=>`<i class="${P[k].state==='FRESH'?'on':(P[k].state==='STALE'?'s':'m')}"></i>`).join('')}</div>
+    ${names.map(k=>`<div class="kv2"><span class="k">${E(k)}</span><span class="v" style="color:${P[k].state==='FRESH'?'var(--ink)':(P[k].state==='STALE'?'var(--yellow)':'#8b9ea3')}">${E(P[k].state)}${P[k].state!=='FRESH'&&P[k].age!=null?' · '+nfmAgeText(P[k].age):''}</span></div>`).join('')}
   </div>`;
-
-  el('botband').innerHTML=storage+network+power;
+  el('botband').innerHTML=storage+network+pipe;
 }
 
 /* ---------------- monitor integrity ticker ---------------- */
-function renderIntegrity(){
-  const cmap={g:'green',y:'yellow',r:'red'};
-  const warn=DATA.integrity.filter(c=>c.s!=='g').length;
-  el('integrity').innerHTML=
-    `<div class="lead"><span class="t">Monitor</span><span class="s2">INTEGRITY · ${warn?warn+' WARN':'ALL OK'}</span></div>`
-    + DATA.integrity.map(c=>`<div class="ichip ${c.s==='r'?'crit':''}">
-        <div class="il">${c.k}</div>
-        <div class="iv"><span class="dot ${c.s}"></span><span class="c-${cmap[c.s]}">${c.v}</span></div>
-      </div>`).join('');
+function renderIntegrity(m){
+  const I=m.integrity, cm={g:'green',y:'yellow',r:'red',u:'unk'};
+  const mp=m.panels.monitor, c=m.collector, now=Date.now()/1000;
+  const cAge=c&&typeof c.finished_at==='number'?now-c.finished_at:null;
+  const cs=!mp?'u':(mp.state==='FRESH'?'g':'y');
+  const chips=(I||[]).filter(x=>nfmObj(x)).concat([{k:'Collector',v:cAge===null?'UNKNOWN':'RAN '+nfmAgeText(cAge)+' AGO',s:cs}]);
+  const warn=chips.filter(x=>x.s!=='g').length;
+  el('integrity').innerHTML=`<div class="lead"><span class="t">Monitor</span><span class="s2">INTEGRITY · ${I?(warn?warn+' NOT OK':'ALL OK'):'NOT REPORTED'}</span></div>`
+    + chips.map(x=>`<div class="ichip ${x.s==='r'?'crit':''}"><div class="il">${E(x.k)}</div>
+        <div class="iv"><span class="dot ${['g','y','r','u'].indexOf(x.s)>=0?x.s:'u'}"></span><span class="c-${cm[x.s]||'unk'}">${E(x.v)}</span></div></div>`).join('');
 }
 
 /* ---------------- clock ---------------- */
@@ -672,52 +856,13 @@ function renderClock(){
   el('cdate').textContent=d.toLocaleDateString('en-US',{weekday:'short',year:'numeric',month:'short',day:'2-digit'}).toUpperCase();
 }
 
-/* ---------------- mock tick (fallback when no live /api/state) ---------------- */
-function mockTick(){
-  DATA.nodes.forEach(n=>{n.cpu=jit(n.cpu,6,3,95);n.ramU=jit(n.ramU,2,10,92);n.disk=jit(n.disk,0.8,8,90);
-    if(n.gpu){n.gpu.util=Math.round(jit(n.gpu.util,7,0,99));n.gpu.temps=n.gpu.temps.map(t=>jit(t,1.5,30,74));n.gpu.vramU=jit(n.gpu.vramU,1,4,n.gpu.vram)}});
-  DATA.ups.forEach(u=>{u.load=jit(u.load,3,15,70);u.runtime=jit(u.runtime,2,20,60)});
-  DATA.pihole.qpm=jit(DATA.pihole.qpm,30,120,420);DATA.pihole.blocked=jit(DATA.pihole.blocked,.6,14,26);DATA.pihole.total+=Math.round(rnd(40,260));
-  DATA.opnsense.wan1.down=spark();DATA.opnsense.wan1.up=spark();DATA.opnsense.wan1.lat=jit(DATA.opnsense.wan1.lat,1.5,4,20);
-  DATA.opnsense.wan2.down=spark();DATA.opnsense.wan2.lat=jit(DATA.opnsense.wan2.lat,4,30,80);
-  DATA.opnsense.states=Math.round(jit(DATA.opnsense.states,180,7000,9500));
-  DATA.gpus.forEach(g=>{if(g.planned)return;g.util=Math.round(jit(g.util,8,0,99));g.watts=jit(g.watts,10,50,260);g.temps=g.temps.map(t=>jit(t,1.5,30,74));g.vramU=jit(g.vramU,300,3000,g.vram)});
-  DATA.k8s.pods=Math.round(jit(DATA.k8s.pods,1,58,70));
-  // integrity: journal-error count flickers 0..2 to show the WARN path works
-  const je=Math.round(rnd(0,2.3));DATA.integrity[3].v=String(je);DATA.integrity[3].s=je>=2?'y':'g';
-  DATA.power.feeds[0].w=Math.round(jit(DATA.power.feeds[0].w,40,600,1000));
-  DATA.power.feeds[1].w=Math.round(jit(DATA.power.feeds[1].w,25,300,520));
-  renderAll();
+/* ---------------- auto-scale: ONE translate+scale, nothing else positions the stage ---------------- */
+function fit(){
+  const s=Math.min(innerWidth/1920, innerHeight/1080);
+  el('stage').style.transform=`translate(${(innerWidth-1920*s)/2}px,${(innerHeight-1080*s)/2}px) scale(${s})`;
 }
-// Phase 3.1 — overall system state from the live data (worst wins)
-function computeOverall(){
-  let crit=0, warn=0;
-  (DATA.integrity||[]).forEach(c=>{ if(c.s==='r')crit++; else if(c.s==='y')warn++; });
-  (DATA.services||[]).forEach(s=>{ if(s.s==='r')crit++; else if(s.s==='y')warn++; });
-  (DATA.nodes||[]).forEach(n=>{ if(n.st==='r')crit++; else if(n.st==='y')warn++; });
-  return {crit,warn,level: crit?'crit':(warn?'warn':'ok')};
-}
-function updateHeader(){
-  const o=computeOverall(), b=el('hstatus'); if(!b) return;
-  if(o.level==='crit'){ b.className='badge crit';
-    b.innerHTML=`<span class="dot r"></span>CRITICAL · ${o.crit} ALERT${o.crit>1?'S':''}`; }
-  else if(o.level==='warn'){ b.className='badge warn';
-    b.innerHTML=`<span class="dot y"></span>DEGRADED · ${o.warn} WARNING${o.warn>1?'S':''}`; }
-  else { b.className='badge ok'; b.innerHTML='<span class="dot g"></span>ALL SYSTEMS NOMINAL'; }
-}
-function renderAll(){renderSummary();renderNodes();renderIntegrity();renderRail();renderSlurm();renderGpu();renderBottom();updateHeader();}
-
-/* ---------------- auto-scale stage to viewport ---------------- */
-// SAFE < 1 leaves a small border so nothing is clipped by monitor/HDMI overscan.
-// If your monitor shows a black edge, set its OSD scaling to "1:1"/"Full" and raise this toward 1.
-const SAFE = 1;
-function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080)*SAFE;
-  const st=el('stage');st.style.transform=`scale(${s})`;
-  document.body.style.width=innerWidth+'px';
-  st.style.marginLeft=((innerWidth-1920*s)/2)+'px';st.style.marginTop=((innerHeight-1080*s)/2)+'px';}
 addEventListener('resize',fit);
 
-/* ---------------- live data: poll /api/state, fall back to mock ---------------- */
 /* NFM-DISPLAY-STATE-BEGIN  (pure; offline-tested by tests/test_p2_renderer.mjs - keep in sync)
    The wall must show the BACKEND's truth, not "did /api/state answer".
    Historical defect: this returned LIVE whenever the fetch succeeded and the whole-snapshot ts was
@@ -831,6 +976,9 @@ function nfmDisplayState(s, nowSec, bound){
   if(!s || typeof s!=='object')                 return R('OFFLINE', null, [], 'no snapshot');
   const ts=(typeof s.ts==='number' && isFinite(s.ts) && s.ts>0) ? s.ts : null;
   if(ts===null)                                 return R('STALE', null, [], 'snapshot has no timestamp');
+  /* A snapshot from the future is a broken or skewed clock, not a fresh one (same 60 s tolerance as
+     serve.py's wan_posture_fresh). It used to clamp to age 0 and read LIVE. */
+  if(ts-nowSec>60)                              return R('UNKNOWN', null, [], 'snapshot timestamp is '+Math.round(ts-nowSec)+'s in the future (clock invalid)');
   const age=Math.max(0, nowSec-ts);
   if(age>bound)                                 return R('STALE', age, [], 'snapshot age '+Math.round(age)+'s exceeds '+bound+'s');
   const P=(s.panels && typeof s.panels==='object') ? s.panels : null;
@@ -855,7 +1003,7 @@ function nfmDisplayState(s, nowSec, bound){
 /* Ages a carried panel honestly: serve.py reports panels[].age from the last FRESH observation and
    null when that is unknown. Null must read as UNKNOWN, never as young. */
 function nfmAgeText(sec){
-  if(sec==null || !isFinite(sec)) return '?';
+  if(sec==null || !isFinite(sec) || sec<0) return '?';   /* a negative age is a clock fault, not "0s" */
   if(sec<90) return Math.round(sec)+'s';
   if(sec<5400) return Math.round(sec/60)+'m';
   if(sec<172800) return Math.round(sec/3600)+'h';
@@ -890,10 +1038,15 @@ function nfmIncidentState(feed, nowSec, bound){
                                 incidentId:null, episode:null, lifecycleStatus:null,
                                 viewStatus:null, cycleAt:null, completeness:null,
                                 banner:null, reason:''}, o);
+  /* A timestamp more than SKEW_TOLERANCE_S in the future is a broken clock. NaN marks "present but
+     invalid", distinct from null ("absent"), so it can never age as "very fresh" (age 0). */
+  const SKEW_TOLERANCE_S = 60;
   const age = (iso) => {
     if(typeof iso!=='string' || !iso) return null;
     const t = Date.parse(iso);
-    return isFinite(t) ? Math.max(0, nowSec - t/1000) : null;
+    if(!isFinite(t)) return null;
+    const a = nowSec - t/1000;
+    return a < -SKEW_TOLERANCE_S ? NaN : Math.max(0, a);
   };
 
   if(!feed || typeof feed!=='object')
@@ -928,6 +1081,12 @@ function nfmIncidentState(feed, nowSec, bound){
     lastKnown: feed.status === 'PRODUCER_FAILED'
   };
 
+  if([feedAge, projAge, cycleAge].some(a => Number.isNaN(a)))
+    /* A future timestamp anywhere in the envelope is a broken producer clock, not a fresh projection.
+       It takes the same path as an unusable age: UNKNOWN, never FRESH, never green. */
+    return R(Object.assign({}, base, {status:feed.status, freshness:'UNKNOWN', tone:'warn',
+      banner:'INCIDENT FEED CLOCK INVALID',
+      reason:'a feed timestamp is more than '+SKEW_TOLERANCE_S+'s in the future'}));
   if(feedAge === null)
     return R(Object.assign({}, base, {status:feed.status, freshness:'UNKNOWN', tone:'warn',
       banner:'INCIDENT FEED AGE UNKNOWN', reason:'feed carries no usable generated_at'}));
@@ -1125,10 +1284,15 @@ function nfmProposalState(feed, nowSec, bound){
                                 firing:null, cleared:null, detections:null, feedAge:null,
                                 collector:'UNKNOWN', collectorAge:null, proposals:[], more:0,
                                 banner:null, reason:''}, o);
+  /* A timestamp more than SKEW_TOLERANCE_S in the future is a broken clock. NaN marks "present but
+     invalid", distinct from null ("absent"), so it can never age as "very fresh" (age 0). */
+  const SKEW_TOLERANCE_S = 60;
   const age = (iso) => {
     if(typeof iso!=='string' || !iso) return null;
     const t = Date.parse(iso);
-    return isFinite(t) ? Math.max(0, nowSec - t/1000) : null;
+    if(!isFinite(t)) return null;
+    const a = nowSec - t/1000;
+    return a < -SKEW_TOLERANCE_S ? NaN : Math.max(0, a);
   };
 
   if(!feed || typeof feed!=='object')
@@ -1152,6 +1316,11 @@ function nfmProposalState(feed, nowSec, bound){
                 proposals:list, more:(typeof feed.more_not_shown==='number')
                                      ? feed.more_not_shown : 0};
 
+  /* A future generated_at is a broken clock: no count from it is current. */
+  if(Number.isNaN(feedAge))
+    return R(Object.assign({}, base, {show:true, status:'STALE', tone:'warn',
+      banner:'PROPOSAL FEED CLOCK INVALID',
+      reason:'generated_at is more than '+SKEW_TOLERANCE_S+'s in the future'}));
   /* Precedence 1: a projection older than the bound cannot describe now. */
   if(feedAge === null)
     return R(Object.assign({}, base, {show:true, status:'STALE', tone:'warn',
@@ -1263,118 +1432,178 @@ function nfmProposalPanel(feed, nowSec, bound){
 }
 /* NFM-PROPOSAL-PANEL-END */
 
-function updateMode(ds, s){
-  const b=el('modebadge'); if(!b) return;
-  const worst=(names)=>{ if(!s||!s.panels||!names.length) return null;
-    let w=null; for(const n of names){ const a=s.panels[n]?s.panels[n].age:null;
-      if(a==null) return null; if(w===null||a>w) w=a; } return w; };
-  if(ds.state==='LIVE'){ b.className='badge ok'; b.innerHTML='<span class="dot g"></span>LIVE'; return; }
-  if(ds.state==='DEGRADED'){
-    const w=worst(ds.stale);
-    b.className='badge warn';
-    b.innerHTML='<span class="dot y"></span>DEGRADED · '+ds.stale.join(' ').toUpperCase()+' '+nfmAgeText(w);
-    return; }
-  if(ds.state==='STALE'){
-    b.className='badge crit';
-    b.innerHTML='<span class="dot r"></span>STALE '+nfmAgeText(ds.age); return; }
-  if(ds.state==='OFFLINE'){
-    b.className='badge crit'; b.innerHTML='<span class="dot r"></span>OFFLINE'; return; }
-  b.className='badge warn'; b.innerHTML='<span class="dot y"></span>UNKNOWN';
+/* ============================================================================
+   Live state. Three INDEPENDENT feeds, each with its own request ordering, timeout and freshness:
+   /api/state (estate), /api/incident (live incident projection), /api/proposals (owner review).
+   Losing one never erases or re-judges another.
+   ============================================================================ */
+const FETCH_TIMEOUT_MS=8000;
+const DEMO=/[?&]demo=1(&|$)/.test(location.search);
+let MODEL=nfmModel(null);
+const LINK={snap:null, okAt:null, fails:0, seq:0, inflight:false, tracker:nfmSampleTracker(), lastEvent:null};
+const FEEDS={inc:{feed:undefined, seq:0, inflight:false, gate:nfmLatestGate()},
+             prop:{feed:undefined, seq:0, inflight:false, gate:nfmLatestGate()}};
+const WANHIST={wan1:[], wan2:[]};
+
+/* ?demo=1 only: a fixed, clearly watermarked sample. It never runs as a fallback for a dead feed. */
+function nfmDemoSnapshot(now){
+  const nodes={}, P={};
+  NFM_INV.nodes.forEach((n,i)=>{ nodes[n.host]={cpu:4+i*3, ramU:10+i*5, disk:20+i*3, st:'g'}; });
+  ['gpu','k8s','monitor','opnsense','pihole','pihole_api','prometheus','slurm','switch','ups'].forEach(k=>{ P[k]={state:'FRESH',age:0,src:k}; });
+  return {ts:now-3, mode:'LIVE', panels:P, nodes:nodes,
+    ups:{midatlantic:{load:40,batt:100,runtime:30}, tripplite:{load:50,batt:100,runtime:12}},
+    ups_status:{verdict:'OK',reporting:2,units:{midatlantic:{status:'OL'},tripplite:{status:'OL'}}},
+    integrity:['Backup Verify','Hardening Drift','Exposure Guard','Journal Errors','Auth Failures','LLM Router','NPM DNS','Net Dead-man','SMART Trend','Wazuh SIEM']
+      .map(k=>({k:k,v:'DEMO',s:'g'})),
+    services:['Proxmox Backup','OPNsense','Pi-hole (pri)','Pi-hole (sec)','Grafana','Wazuh SIEM','Headscale','Vaultwarden','Ollama · Qwen72B','Open WebUI','Jellyfin','Home Assistant']
+      .map(n=>({n:n,h:'demo',s:'g'})),
+    pihole:{primary:1,secondary:1}, pihole_stats:{blocked:15,total:50000,qpm:100},
+    opnsense:{wan1:{state:'UP',gw:'Online',lat:20,loss:0,monitor:'demo-a',gw_addr:'demo-b',down_bps:2e6,up_bps:5e5},
+              wan2:{state:'UP',gw:'Online',lat:50,loss:0,monitor:'demo-c',gw_addr:'demo-d',down_bps:1e3,up_bps:5e2},
+              states:900, failover:{armed:true,active:'wan1',observed_at:now-60}},
+    k8s:{nodes:4,ready:4,pods:40,podsTotal:42,gpuop:'DEFERRED'},
+    slurm:{running:[],pending:[],partitions:'student* · research',node:'QuarkyLab'},
+    gpus:[{host:'QuarkyLab',card:'Quadro RTX 8000',temps:[35],util:0,vramU:0,vram:46080,watts:5},
+          {host:'Jarvis',card:'2× Quadro RTX 6000',temps:[40,40],util:0,vramU:100,vram:49152,watts:60}],
+    network:{up:11,ports:51,tenG:3,in_mbps:2,out_mbps:2},
+    collector:{finished_at:now-240,started_at:now-300,duration_s:60,max_age_s:2100}};
 }
-function mergeGpus(cur,live){
-  return cur.map(g=>{ if(g.planned) return g;
-    const L=live.find(x=>x.host===g.host); if(!L) return g;
-    return {...g,card:L.card,temps:L.temps,util:L.util,vramU:L.vramU,vram:L.vram,
-            watts:(L.watts!=null?L.watts:g.watts)}; });
+function nfmGet(url, signal){
+  if(!DEMO) return fetch(url,{cache:'no-store', signal:signal});
+  const now=Date.now()/1000, iso=new Date().toISOString();
+  const body=url==='/api/state' ? nfmDemoSnapshot(now)
+    : url==='/api/incident' ? {schema:'netframe-live-dashboard-feed/v1',status:'NO_SELECTION',generated_at:iso,selection:null,state:null,state_generated_at:null,error:null}
+    : {schema:'netframe-proposal-dashboard-feed/v2',generated_at:iso,collector:{status:'AVAILABLE',age_seconds:5},
+       summary:{counts_are_authoritative:true,awaiting_owner_review:0,owner_action_required:0,resolved_history:0,security_pending:0,pending_firing:0,pending_cleared:0,pending_detections:0},proposals:[]};
+  return Promise.resolve({ok:true, json:()=>Promise.resolve(body)});
 }
-function applyLive(s){
-  if(s.nodes){DATA.nodes.forEach(n=>{const L=s.nodes[n.host]; if(!L) return;
-    if(L.cpu!=null)n.cpu=L.cpu; if(L.ramU!=null)n.ramU=L.ramU; if(L.disk!=null)n.disk=L.disk;
-    if(L.st)n.st=L.st; if(L.gpu&&n.gpu)Object.assign(n.gpu,L.gpu);});}
-  if(s.ups){DATA.ups.forEach(u=>{const k=u.name.indexOf('Middle')>=0?'midatlantic':'tripplite';
-    const L=s.ups[k]; if(!L) return;
-    if(L.load!=null)u.load=L.load; if(L.batt!=null)u.batt=L.batt; if(L.runtime!=null)u.runtime=L.runtime;});}
-  if(s.integrity)DATA.integrity=s.integrity;
-  if(s.services)DATA.services=s.services;
-  if(s.gpus)DATA.gpus=mergeGpus(DATA.gpus,s.gpus);
-  if(s.slurm){const L=s.slurm;
-    if(L.running)DATA.slurm.running=L.running;
-    if(L.pending)DATA.slurm.pending=L.pending;
-    if(L.partitions)DATA.slurm.partitions=L.partitions;
-    if(L.node)DATA.slurm.node=L.node;}
-  if(s.k8s)Object.assign(DATA.k8s,s.k8s);
-  if(s.pihole){const p=s.pihole; // reflect DNS up/down onto the Pi-hole service dots
-    DATA.services.forEach(sv=>{ if(sv.n==='Pi-hole (pri)'&&p.primary!=null)sv.s=p.primary?'g':'r';
-      if(sv.n==='Pi-hole (sec)'&&p.secondary!=null)sv.s=p.secondary?'g':'r';});}
-  if(s.pihole_stats){const p=s.pihole_stats;
-    if(p.blocked!=null)DATA.pihole.blocked=p.blocked;
-    if(p.total!=null)DATA.pihole.total=p.total;
-    if(p.qpm!=null)DATA.pihole.qpm=p.qpm;}
-  if(s.opnsense){const o=s.opnsense;
-    ['wan1','wan2'].forEach(k=>{const L=o[k],w=DATA.opnsense[k]; if(!L||!w)return;
-      if(L.state)w.state=L.state;
-      if(L.down_bps!=null){WANHIST[k].push(L.down_bps);while(WANHIST[k].length>16)WANHIST[k].shift();
-        const m=Math.max(1,...WANHIST[k]); w.down=WANHIST[k].map(v=>v/m*100); w.mbps=L.down_bps/1e6;}
-      if(L.up_bps!=null)w.upMbps=L.up_bps/1e6;
-      if(L.gw!==undefined){w.gw=L.gw;w.lat=L.lat;w.loss=L.loss;}});
-    if(o.states!=null)DATA.opnsense.states=o.states;}
-  if(s.network){const n=s.network,d=DATA.network;
-    if(n.up!=null)d.up=n.up; if(n.ports!=null)d.ports=n.ports; if(n.tenG!=null)d.tenG=n.tenG;
-    if(n.in_mbps!=null)d.inMbps=n.in_mbps; if(n.out_mbps!=null)d.outMbps=n.out_mbps;}
+
+/* ---------------- lamps / overlay / beam: re-evaluated every second so ages keep advancing ---------------- */
+function nowSec(){ return Date.now()/1000; }
+function currentView(){
+  const t=nowSec(), ds=nfmLinkState(LINK, t), wan=nfmWanPosture(MODEL.opn), conds=nfmConditions(MODEL, wan);
+  return {t:t, ds:ds, wan:wan, conds:conds, lamps:nfmLamps(ds, MODEL, conds, FEEDS.inc.feed, FEEDS.prop.feed, t)};
 }
-const WANHIST={wan1:[],wan2:[]};
+function renderLamps(v){
+  const host=el('lamps');
+  if(!host.children.length){
+    host.innerHTML=[0,1,2,3].map(i=>`<div class="hl" id="lamp${i}"><div class="k"><span class="lk"></span>${i===1?'<span class="hb" id="hb"></span>':''}</div><div class="v"></div><div class="w"></div></div>`).join('');
+  }
+  v.lamps.forEach((l,i)=>{ const d=el('lamp'+i);
+    d.className='hl'+(l.sev==='r'?' crit':'')+(l.sev==='u'?' unk':'');
+    d.style.setProperty('--c',SEVC[l.sev]);
+    d.querySelector('.lk').textContent=l.label;
+    d.querySelector('.v').textContent=SEVG[l.sev]+' '+l.value;
+    d.querySelector('.w').textContent=l.why;
+    d.title=l.why; });
+}
+function blip(color){
+  const h=el('hb'); if(!h) return;
+  h.style.setProperty('--hbc',SEVC[color]);
+  h.classList.remove('blip'); void h.offsetWidth; h.classList.add('blip');
+}
+function renderLinkChrome(v){
+  const st=el('stage'), s=v.ds.state, lost=(s==='OFFLINE'||s==='STALE'||s==='UNKNOWN'||s==='AWAITING');
+  st.classList.toggle('lostlink', lost);
+  st.classList.remove('beam-live','beam-partial','beam-off'); st.classList.add('beam-'+nfmBeamMode(s));
+  const ov=el('overlay');
+  if(!lost){ ov.className=''; return; }
+  const last=LINK.snap && nfmNum(LINK.snap.ts)!==null ? new Date(LINK.snap.ts*1000).toLocaleTimeString('en-GB') : null;
+  const sinceOk=typeof LINK.okAt==='number' ? nfmAgeText(v.t-LINK.okAt) : null;
+  let a, b, amber=false;
+  if(s==='AWAITING'){ a='◢ ACQUIRING SIGNAL ◣'; b='AWAITING THE FIRST SAMPLE FROM THE DASHBOARD BACKEND · NOTHING SHOWN IS A MEASUREMENT'; amber=true; }
+  else if(s==='OFFLINE'){ a='◢ NO CARRIER ◣'; b='TELEMETRY LINK LOST'+(sinceOk?' '+sinceOk:'')+(last?' · VALUES ARE LAST KNOWN '+last:' · NO SAMPLE RECEIVED')+' · NOTHING HERE IS CURRENT'; }
+  else if(s==='STALE'){ a='◢ SIGNAL STALE ◣'; b='BACKEND ANSWERS BUT ITS SNAPSHOT IS '+(v.ds.age!=null?nfmAgeText(v.ds.age):'?')+' OLD'+(last?' · VALUES ARE LAST KNOWN '+last:''); }
+  else { a='◢ SIGNAL UNVERIFIED ◣'; b=String(v.ds.reason).toUpperCase(); amber=true; }
+  el('ovA').textContent=a; el('ovB').textContent=b;
+  ov.className='on'+(amber?' amber':'');
+  /* sit over the estate (nodes), never over the incident / proposal strips, which have their own feeds */
+  const n=el('nodes'), sr=st.getBoundingClientRect(), nr=n.getBoundingClientRect(), k=sr.width/1920||1;
+  ov.style.left=((nr.left-sr.left+nr.width/2)/k)+'px'; ov.style.top=((nr.top-sr.top+nr.height/2)/k)+'px';
+}
+function renderAll(){
+  const v=currentView(), m=MODEL;
+  renderLamps(v); renderSummary(m); renderNodes(m); renderIntegrity(m); renderRail(m, v.wan);
+  renderSlurm(m); renderGpu(m); renderBottom(m); renderLinkChrome(v);
+}
+function tick(){ renderClock(); const v=currentView(); renderLamps(v); renderLinkChrome(v); }
+
+/* ---------------- /api/state ---------------- */
 async function pull(){
+  if(LINK.inflight) return;                       /* no overlapping requests on one feed */
+  LINK.inflight=true;
+  const seq=++LINK.seq, ac=new AbortController(), to=setTimeout(()=>ac.abort(), FETCH_TIMEOUT_MS);
   try{
-    const r=await fetch('/api/state',{cache:'no-store'});
-    if(!r.ok) throw 0;
+    const r=await nfmGet('/api/state', ac.signal);
+    if(!r.ok) throw new Error('HTTP '+r.status);
     const s=await r.json();
-    if(!s) throw 0;
-    // s.ok is NOT a health signal: it is sources.prometheus||sources.monitor, and carry() holds
-    // those true on carried data. The snapshot is rendered and JUDGED on its own declared state.
-    const ds = nfmDisplayState(s, Date.now()/1000);
-    applyLive(s); updateMode(ds, s); renderAll();
+    if(!nfmObj(s)) throw new Error('not a snapshot');
+    const ev=LINK.tracker.accept(seq, s.ts);
+    if(ev==='DROP') return;                       /* an older request answered late: ignore it */
+    LINK.snap=s; LINK.okAt=nowSec(); LINK.fails=0; LINK.lastEvent=ev;
+    MODEL=nfmModel(s);
+    if(ev==='NEW' || ev==='REGRESSED') recordHistory(MODEL);
+    const hb=nfmHeartbeat(ev, nfmLinkState(LINK, nowSec()).state);
+    if(hb) blip(hb);
   }catch(e){
-    updateMode({state:'OFFLINE',age:null,stale:[],reason:'fetch failed'}, null); mockTick();
+    LINK.fails++;                                 /* last real values stay, dimmed; nothing is invented */
+  }finally{
+    clearTimeout(to); LINK.inflight=false; renderAll();
   }
 }
 
-/* The incident panel is polled SEPARATELY and its failures are caught SEPARATELY. An
-   unreachable incident feed must degrade one strip, never the operations wall: the base dashboard
-   predates this feature and has to keep working without it. */
+/* ---------------- /api/incident and /api/proposals: polled SEPARATELY, caught SEPARATELY ----------------
+   Each has its own in-flight guard, timeout and response gate, so a slow or failed answer on one feed
+   can never overwrite a newer answer or touch /api/state. A transport failure is the contract's
+   FEED_UNAVAILABLE (feed = null), never "no incident" and never "0 proposals". */
 async function pullIncident(){
+  const F=FEEDS.inc; if(F.inflight) return; F.inflight=true;
+  const seq=++F.seq, ac=new AbortController(), to=setTimeout(()=>ac.abort(), FETCH_TIMEOUT_MS);
   let feed = null;
   try{
-    const r = await fetch('/api/incident',{cache:'no-store'});
+    const r = DEMO ? await nfmGet('/api/incident') : await fetch('/api/incident',{cache:'no-store', signal:ac.signal});
     if(r.ok) feed = await r.json();
   }catch(e){ feed = null; }
+  finally{ clearTimeout(to); F.inflight=false; }
+  if(!F.gate.take(seq)) return;
+  F.feed=feed;
   try{
     const host = el('incident'); if(!host) return;
     const html = nfmIncidentPanel(feed, Date.now()/1000);
     host.innerHTML = html;
     host.className = html ? 'on' : '';
   }catch(e){ /* a renderer fault must not stop the clock or the operations pull */ }
+  afterFeed();
 }
-
-/* Polled separately, caught separately. An unreachable proposal projection degrades one strip
-   and cannot touch /api/state, /api/incident or the live incident panel. */
 async function pullProposals(){
+  const F=FEEDS.prop; if(F.inflight) return; F.inflight=true;
+  const seq=++F.seq, ac=new AbortController(), to=setTimeout(()=>ac.abort(), FETCH_TIMEOUT_MS);
   let feed = null;
   try{
-    const r = await fetch('/api/proposals',{cache:'no-store'});
+    const r = DEMO ? await nfmGet('/api/proposals') : await fetch('/api/proposals',{cache:'no-store', signal:ac.signal});
     if(r.ok) feed = await r.json();
   }catch(e){ feed = null; }
+  finally{ clearTimeout(to); F.inflight=false; }
+  if(!F.gate.take(seq)) return;
+  F.feed=feed;
   try{
     const host = el('proposals'); if(!host) return;
     const html = nfmProposalPanel(feed, Date.now()/1000);
     host.innerHTML = html;
     host.className = html ? 'on' : '';
   }catch(e){ /* a renderer fault must not stop the clock or the operations pull */ }
+  afterFeed();
+}
+function afterFeed(){
+  el('stage').classList.toggle('strips', el('incident').className==='on' || el('proposals').className==='on');
+  try{ renderLamps(currentView()); }catch(e){}
 }
 
-/* boot */
-renderAll();renderClock();fit();
-setInterval(renderClock,1000);
-pull(); setInterval(pull,3000);
-pullIncident(); setInterval(pullIncident,5000);
-pullProposals(); setInterval(pullProposals,5000);
+/* boot: nothing is drawn as data until a real snapshot arrives */
+if(DEMO) el('stage').classList.add('demo');
+fit(); renderClock(); renderAll();
+setInterval(tick, 1000);
+pull(); setInterval(pull, 3000);
+pullIncident(); setInterval(pullIncident, 5000);
+pullProposals(); setInterval(pullProposals, 5000);
 </script>
