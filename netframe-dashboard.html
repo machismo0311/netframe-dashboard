@@ -344,7 +344,9 @@ function nfmModel(s){
     m.ups[u.key]={load:nfmNum(L.load), batt:nfmNum(L.batt), runtime:nfmNum(L.runtime)}; });
   if(Array.isArray(s.services)){
     m.services=s.services.filter(x=>nfmObj(x)).map(x=>({n:String(x.n), h:String(x.h||''),
-      s:['g','y','r','u'].indexOf(x.s)>=0?x.s:'u'}));
+      s:['g','y','r','u'].indexOf(x.s)>=0?x.s:'u',
+      /* d: the backend's measured reason for a non-green row (Wazuh SIEM, Packet C); never inferred here */
+      d:(typeof x.d==='string' && x.d) ? x.d.slice(0,80) : null}));
     /* Pi-hole up/down from Prometheus (pihole-dns job) is a second, independent measurement */
     const p=m.pihole;
     if(p) m.services.forEach(v=>{
@@ -394,8 +396,8 @@ function nfmConditions(m, wan, nowSec){
   NFM_INV.nodes.forEach(n=>{ if(m.nodes[n.host].st==='r')
     add('r','NODE',n.host,n.host+' not responding (node-exporter up = 0) · cause not determined','prometheus'); });
   (m.services||[]).forEach(v=>{
-    if(v.s==='r') add('r','SERVICE',v.n,v.n+' check failing · INVENTORY '+v.h+' · cause not determined','monitor');
-    else if(v.s==='y') add('y','SERVICE',v.n,v.n+' check degraded · INVENTORY '+v.h,'monitor'); });
+    if(v.s==='r') add('r','SERVICE',v.n,v.n+(v.d?' '+v.d+' · INVENTORY '+v.h:' check failing · INVENTORY '+v.h+' · cause not determined'),'monitor');
+    else if(v.s==='y') add('y','SERVICE',v.n,v.n+(v.d?' '+v.d:' check degraded')+' · INVENTORY '+v.h,'monitor'); });
   (m.integrity||[]).forEach(c=>{ if(!nfmObj(c)) return;
     if(c.s==='r') add('r','INTEGRITY',String(c.k),String(c.k)+': '+String(c.v),'monitor');
     else if(c.s==='y') add('y','INTEGRITY',String(c.k),String(c.k)+': '+String(c.v),'monitor'); });
@@ -422,7 +424,7 @@ function nfmConditions(m, wan, nowSec){
 /* Measured domains this wall does not cover at all: shown as NOT MEASURED, never as healthy. */
 function nfmNotMeasured(m){
   const nm=['storage (ZFS)','UPS shutdown budget','battery health'];
-  (m.services||[]).forEach(v=>{ if(v.s==='u') nm.push(v.n+' (no check reported)'); });
+  (m.services||[]).forEach(v=>{ if(v.s==='u') nm.push(v.n+(v.d?' ('+v.d+')':' (no check reported)')); });
   (m.integrity||[]).forEach(c=>{ if(nfmObj(c) && c.s==='u') nm.push(String(c.k)); });
   return nm;
 }

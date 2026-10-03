@@ -18,7 +18,7 @@ Still mock on the page (wired in later steps, each its own source):
 Dependency-free: Python 3 stdlib only. Runs on Ares today; same file runs on the Pi.
   Run:  python3 serve.py [port]     (default 8088)   ->  http://localhost:8088
 """
-import datetime, json, os, sys, time, threading, urllib.parse, urllib.request, urllib.error, ssl, base64, subprocess
+import datetime, json, os, re, sys, time, threading, urllib.parse, urllib.request, urllib.error, ssl, base64, subprocess
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -144,6 +144,67 @@ _SEV_RANK = {"g": 0, "u": 1, "y": 2, "r": 3}
 def _worst(sevs):
     return max(sevs, key=lambda s: _SEV_RANK.get(s, 1)) if sevs else "u"
 
+# ---------------------------------------------------------------- Wazuh SIEM (Packet C)
+# The old row read "CORE OK" in green from 2026-09-24 to 2026-10-02 while the indexer was down and
+# auth telemetry was blind on 8 of 9 hosts: it showed the manager's daemon list as the SIEM's health.
+# netframe-monitor now reports two checks from one measurement:
+#   wazuh           services  = worst(manager, indexer, dashboard, Filebeat)   -> Services row
+#   wazuh_coverage  integrity = worst(agents, auth telemetry, drops)           -> Integrity chip
+# Each verdict is OK / WARN / CRIT / UNKNOWN. Could-not-measure is UNKNOWN ("u"), never green and
+# never a fabricated failure; an unreachable SIEM host stays red, as it always was.
+WAZUH_SCHEMA = "netframe-wazuh-health/v1"
+_WAZUH_SEV = {"OK": "g", "WARN": "y", "CRIT": "r", "UNREACHABLE": "r",
+              "UNKNOWN": "u", "AUTH-FAIL": "u", "TIMEOUT": "u"}
+_SEV_WORD = {"g": "NOMINAL", "y": "DEGRADED", "r": "CRITICAL", "u": "UNKNOWN"}
+_WZ_SAFE = re.compile(r"[^A-Z0-9_ /·]")
+
+def _wz_label(text):
+    """A monitor summary such as "CRITICAL · INDEXER_FAILED" as display text. Fixed vocabulary only:
+    anything outside it is dropped, so a producer bug cannot put free text on the wall."""
+    return _WZ_SAFE.sub("", str(text).upper()).replace("_", " ").strip()[:72]
+
+def wazuh_status(M, check):
+    """(text, sev) for one Wazuh check. An absent check, or one from a collector that predates Packet C
+    and so measured only the manager's daemons, cannot show health: it is UNKNOWN. A failure it does
+    report is still shown, because a failure is a fact even from the old check."""
+    c = _chk(M, "wazuh", check)
+    if not c:
+        return "UNKNOWN", "u"
+    v = c.get("verdict", "UNKNOWN")
+    sev = _WAZUH_SEV.get(v, "u")
+    m = c.get("metrics") or {}
+    if v in ("AUTH-FAIL", "TIMEOUT"):
+        return "UNKNOWN · %s" % v, sev
+    if v == "UNREACHABLE":
+        return "CRITICAL · SIEM HOST UNREACHABLE", sev
+    legacy = check == "wazuh" and m.get("schema") != WAZUH_SCHEMA
+    if legacy:
+        if sev == "g":
+            return "UNKNOWN · LEGACY CHECK", "u"
+        return "%s · LEGACY CHECK" % _SEV_WORD[sev], sev
+    label = m.get("services_summary") if check == "wazuh" else m.get("summary")
+    text = _wz_label(label) if isinstance(label, str) and label else ""
+    # The colour comes from the verdict. A label that disagrees with it is replaced, never trusted.
+    if not text.startswith(_SEV_WORD[sev]):
+        text = _SEV_WORD[sev]
+    if check == "wazuh_coverage":
+        text += _wz_counts(m.get("inputs") or {})
+    return text, sev
+
+def _wz_counts(inputs):
+    """ · AUTH 2/9 FRESH · AGENTS 10/10 · DROPS 0 , from measured values only ("?" when unmeasured)."""
+    t, a, x = inputs.get("T") or {}, inputs.get("A") or {}, inputs.get("X") or {}
+    tracked, stale = t.get("tracked"), t.get("stale")
+    auth = ("%d/%d" % (tracked - len(stale), tracked)
+            if isinstance(tracked, int) and tracked and isinstance(stale, list) and t.get("last_seen") else "?")
+    active, req = a.get("active"), a.get("required_total")
+    missing = a.get("missing")
+    agents = ("%d/%d" % (req - len(missing), req)
+              if isinstance(req, int) and req and isinstance(missing, list) and active else "?")
+    dd, dc = x.get("delta_dropped"), x.get("delta_discarded")
+    drops = str(dd + dc) if isinstance(dd, int) and isinstance(dc, int) else "?"
+    return " · AUTH %s FRESH · AGENTS %s · DROPS %s" % (auth, agents, drops)
+
 def integrity(M):
     if not M.get("nodes"):
         return None
@@ -192,9 +253,8 @@ def integrity(M):
                     "s": "r" if failed else ("y" if pend else "g")})
     else:
         out.append(U("SMART Trend"))
-    wv = _v(M, "wazuh", "wazuh")
-    out.append(U("Wazuh SIEM") if wv == "UNKNOWN" else
-               {"k": "Wazuh SIEM", "v": "CORE OK" if wv == "OK" else "CHECK", "s": _s(wv)})
+    wt, ws = wazuh_status(M, "wazuh_coverage")
+    out.append(U("Wazuh SIEM") if (wt, ws) == ("UNKNOWN", "u") else {"k": "Wazuh SIEM", "v": wt, "s": ws})
     return out
 
 def ups_status(M):
@@ -237,7 +297,7 @@ def services(M):
         ("Pi-hole (pri)",  "pve1·.177",   probe("monitoring", "pihole")),
         ("Pi-hole (sec)",  "pve5·.178",   gs("netframe-pihole2")),
         ("Grafana",        "CT103·pve4",  probe("monitoring", "grafana")),
-        ("Wazuh SIEM",     "VM104·.184",  probe("wazuh", "wazuh")),
+        ("Wazuh SIEM",     "VM104·.184",  None),
         ("Headscale",      "pve5·.186",   gs("headscale")),
         ("Vaultwarden",    "CT102·pve3",  gs("vaultwarden")),
         ("Ollama · Qwen72B","Jarvis·GPU", probe("monitoring", "llm_router")),
@@ -247,7 +307,16 @@ def services(M):
     ]
     # No probe and no guest record is UNKNOWN ("u"), not green. OPNsense and Jellyfin have no probe at
     # all, and used to render healthy by construction.
-    return [{"n": n, "h": h, "s": s or "u"} for (n, h, s) in spec]
+    out = [{"n": n, "h": h, "s": s or "u"} for (n, h, s) in spec]
+    # Wazuh SIEM: the services tree, with its reason ("d") when it is not healthy, so the attention
+    # list can say WHAT failed instead of "cause not determined".
+    wt, ws = wazuh_status(M, "wazuh")
+    for row in out:
+        if row["n"] == "Wazuh SIEM":
+            row["s"] = ws
+            if ws != "g":
+                row["d"] = wt
+    return out
 
 def slurm():
     """running/pending jobs + partitions from QuarkyLab via the nfm-slurm wrapper."""

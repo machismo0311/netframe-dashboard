@@ -1,5 +1,5 @@
 {
-  "_comment": "SANITIZED sample of /api/state. Shape and values follow the live Pi snapshot captured 2026-09-30 (serve.py 58bb84d plus this branch's additions: ups_status, collector); addresses are placeholders. ts/fresh_at/observed_at are rewritten to 'now' by the tests and the render harness.",
+  "_comment": "SANITIZED sample of /api/state. Shape and values follow the live Pi snapshot captured 2026-09-30 (serve.py 58bb84d plus this branch's additions: ups_status, collector); the Wazuh SIEM rows use the Packet C vocabulary (CORE OK is retired); addresses are placeholders. ts/fresh_at/observed_at are rewritten to 'now' by the tests and the render harness.",
   "ts": 1790821092.1,
   "mode": "LIVE",
   "ok": true,
@@ -41,7 +41,7 @@
     {"k": "NPM DNS", "v": "0 MISSING", "s": "g"},
     {"k": "Net Dead-man", "v": "FLOW 6227", "s": "g"},
     {"k": "SMART Trend", "v": "STABLE", "s": "g"},
-    {"k": "Wazuh SIEM", "v": "CORE OK", "s": "g"}
+    {"k": "Wazuh SIEM", "v": "NOMINAL · AUTH 9/9 FRESH · AGENTS 9/9 · DROPS 0", "s": "g"}
   ],
   "services": [
     {"n": "Proxmox Backup", "h": "Randy:8007", "s": "g"},
