@@ -155,6 +155,13 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
 `SSH` is a reusable argv prefix. **ControlMaster is important**: the aggregator fires a
 dozen+ SSH calls at once; without multiplexing they can exceed a host's `MaxStartups`
 and silently drop (you'll see values randomly go to zero). One socket per host fixes it.
+But one connection carries at most `MaxSessions` channels (10 by default), and the
+refresh starts 14 Prometheus queries to the same host at once: the extra sessions were
+refused (`error: no more sessions` in that host's sshd log) and ssh quietly fell back to a
+fresh login for each. `sh()` therefore admits at most `SSH_CHANNEL_CAP` (6) concurrent SSH
+calls per host and queues the rest; the queue wait counts against the call's own timeout,
+so a hung host costs no more time than before, and other hosts never wait on it
+(`tests/test_p12_ssh_fanout.py`).
 
 ### 6.2 Credentials
 

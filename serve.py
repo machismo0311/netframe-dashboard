@@ -28,7 +28,8 @@ PORT   = int(sys.argv[1]) if len(sys.argv) > 1 else 8088
 REFRESH = 30.0
 SSH    = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
           # multiplex: all concurrent queries to a host reuse ONE connection
-          # (otherwise 16 parallel ssh can exceed sshd MaxStartups and silently drop)
+          # (otherwise 16 parallel ssh can exceed sshd MaxStartups and silently drop).
+          # One connection carries at most MaxSessions channels: see SSH_CHANNEL_CAP.
           "-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/nfm-cm-%r@%h:%p", "-o", "ControlPersist=60s"]
 KCFG    = os.path.expanduser("~/.kube/config-rke2")     # cluster-admin kubeconfig (read-only use)
 KUBECTL = os.path.expanduser("~/.local/bin/kubectl")
@@ -58,12 +59,50 @@ HOSTS = {"quarkylab": "QuarkyLab", "jarvis": "Jarvis", "randy": "Randy",
          "pve2": "pve2", "pve3": "pve3", "pve4": "pve4", "pve5": "pve5", "pve1": "pve1"}
 
 # ---------------------------------------------------------------- shell helpers
-def sh(cmd, timeout=25, input=None):
+#: Most SSH channels this process opens at once to ONE host. ControlMaster puts every call to a host
+#: on one connection, and sshd caps the sessions on a connection at MaxSessions (10 by default).
+#: build_state used to start 14 nfm-prom calls to pve4 at once: sessions 11 to 14 were refused
+#: ("error: no more sessions" on pve4, 4 per refresh per wall) and ssh silently fell back to a fresh
+#: root login for each. Waiting for a slot here keeps every call on the shared connection.
+#: Well below 10 so a person sharing the master socket, or a slow channel close, still fits.
+SSH_CHANNEL_CAP = 6
+_SSH_SLOTS = {}
+_SSH_SLOTS_LOCK = threading.Lock()
+
+def _ssh_target(cmd):
+    """The host an SSH-prefixed argv goes to, or None for any other command."""
+    n = len(SSH)
+    return cmd[n] if isinstance(cmd, list) and len(cmd) > n and cmd[:n] == SSH else None
+
+def _ssh_slot(host):
+    with _SSH_SLOTS_LOCK:
+        if host not in _SSH_SLOTS:
+            _SSH_SLOTS[host] = threading.BoundedSemaphore(SSH_CHANNEL_CAP)
+        return _SSH_SLOTS[host]
+
+def _run(cmd, timeout, input):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=input)
         return r.stdout if r.returncode == 0 else ""
     except Exception:
         return ""
+
+def sh(cmd, timeout=25, input=None):
+    """stdout of `cmd`, or "" on any failure. An SSH call first waits for one of its host's
+    SSH_CHANNEL_CAP slots. `timeout` covers the wait AND the run, so a host that hangs costs no more
+    wall time than it did before the cap, and one host's queue never delays another host."""
+    host = _ssh_target(cmd)
+    if host is None:
+        return _run(cmd, timeout, input)
+    deadline = time.monotonic() + timeout
+    slot = _ssh_slot(host)
+    if not slot.acquire(timeout=timeout):
+        return ""
+    try:
+        left = deadline - time.monotonic()
+        return _run(cmd, left, input) if left > 0 else ""
+    finally:
+        slot.release()
 
 def prom(query):
     """Run one instant PromQL query via the pve4 nfm-prom wrapper (query on stdin)."""
@@ -711,6 +750,8 @@ def build_state(prev=None):
         except Exception: pass
 
     # fire every independent source concurrently — turns ~15s of serial SSH into ~5s
+    # 13 of these, plus switch()'s serial chain, are nfm-prom calls to pve4: sh() admits at most
+    # SSH_CHANNEL_CAP of them onto pve4's connection at once and queues the rest.
     tasks = {
         "cpu":  lambda: prom_by('100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[2m]))*100)'),
         "ramU": lambda: prom_by('(1 - node_memory_MemAvailable_bytes/node_memory_MemTotal_bytes)*100'),
