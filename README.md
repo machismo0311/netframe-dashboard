@@ -398,12 +398,21 @@ by digest in `tests/test_p10_wazuh_truth.py`. Deploy this wall on every instance
 change: it reads today's daemon-only check as UNKNOWN, while an older wall paired with the new
 collector would still paint the Integrity chip green from the Services verdict alone.
 
+### 7.6b Physical fit (2026-10-07)
+The stage is a fixed 1920x1080 canvas, but content inside it can still be wider than the canvas: the stage
+grid's single column is pinned to `minmax(0,1fr)` so no row's text can widen it, integrity chip values
+end in an ellipsis inside their chip, and an attention row whose text does not fit may take a second
+line while the panel has room. `tests/test_p11_layout_fit.mjs` renders the real page with the wall Pi's
+own fonts (`tests/render/pi-fonts.conf`) at 1920x1080, 1366x768 and 1280x720 and fails on any overflow,
+clipped panel or off-screen Wazuh row.
+
 ### 7.7 Tests and the render harness
 No test touches the estate. The pure blocks (`NFM-*-BEGIN/END`) are extracted from the shipped
 HTML and exercised offline; `serve.py` is exercised with its fetch layer monkeypatched.
 ```bash
 for t in tests/test_*.py;  do python3 "$t"; done
 for t in tests/test_*.mjs; do node "$t";    done      # p7 parity: set NFM_PARITY_HTML to another instance's page
+#                                                       # p11 layout fit: needs Playwright (NFM_PLAYWRIGHT=<module dir>)
 # render the REAL page against fixture scenarios (normal degraded critical overflow crowded
 # startup stale disconnected future recovered), then open http://localhost:8901/?probe=1
 python3 tests/render/fixture_server.py critical 8901

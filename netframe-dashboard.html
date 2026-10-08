@@ -19,7 +19,12 @@
     background:radial-gradient(1200px 700px at 70% -10%,rgba(0,255,240,.06),transparent 60%),
       radial-gradient(900px 600px at 10% 110%,rgba(123,47,255,.07),transparent 60%),var(--base);
     color:var(--ink);padding:14px 20px 30px;overflow:hidden;
-    display:grid;grid-template-rows:62px 122px 54px minmax(0,1fr);row-gap:12px}
+    display:grid;grid-template-rows:62px 122px 54px minmax(0,1fr);row-gap:12px;
+    /* ONE column of exactly the stage's content width. Without it the implicit column is `auto` and
+       grows to the widest row's min-content: one long nowrap chip value (Packet C's Wazuh reason,
+       2026-10-07) widened the head, lamps and integrity rows to 2281px and the stage clipped the
+       clock, the fourth lamp and the right-hand chips off a 1920x1080 screen. */
+    grid-template-columns:minmax(0,1fr)}
   /* CRT scanlines + vignette + scan beam. All three are kept; tuned so they never fight the data:
      scanlines .5 -> .32 (3 px lines no longer cut small glyph strokes) and the four lamps sit above them;
      vignette .7/220 px -> .45/170 px so corner content (clock, inventory, rail corners) keeps contrast;
@@ -93,6 +98,9 @@
     clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px))}
   .ichip .il{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;color:var(--dim);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ichip .iv{font-family:var(--font-mono);font-size:17px;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden}
+  /* a long value is cut with a visible ellipsis inside its chip, never allowed to size the strip;
+     the full text is in the attention list */
+  .ichip .iv>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
   .ichip.crit,.node.crit{border-color:var(--red)!important;animation:critpulse 1.1s infinite}
 
   /* ---- status dots ---- */
@@ -153,6 +161,11 @@
   .att .gl{font-size:21px;text-align:center}
   .att .dom{font-family:var(--font-mono);font-size:13px;letter-spacing:.1em;color:var(--dim)}
   .att .tx{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* a row whose text does not fit one line may take a second (never a third), only while the panel has
+     room; nfmFitAttRows() measures and reverts it otherwise. Long measured reasons (Packet C's Wazuh
+     "AUTH x/y FRESH · AGENTS a/b · DROPS n") stay readable at full size instead of losing their tail. */
+  .att.w2{height:auto;min-height:30px;padding:2px 0}
+  .att.w2 .tx{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.15}
   .att .ag{font-family:var(--font-mono);font-size:13px;color:var(--dim);text-align:right}
   .attsum{flex:1 1 auto;min-height:0;padding:4px 2px 0;font-family:var(--font-mono);line-height:1.3;overflow:hidden}
   .attsum .sl{margin-bottom:2px}
@@ -627,6 +640,12 @@ function renderNodes(m){
 function attRow(c){
   return `<div class="att"><span class="gl" style="color:${SEVC[c.sev]}">${SEVG[c.sev]}</span><span class="dom">${E(c.dom)}</span><span class="tx">${E(c.text)}</span><span class="ag"></span></div>`;
 }
+function nfmFitAttRows(box){
+  const grown=[];
+  box.querySelectorAll('.att').forEach(r=>{ const t=r.querySelector('.tx');
+    if(t && t.scrollWidth>t.clientWidth+1){ r.classList.add('w2'); grown.push(r); } });
+  while(grown.length && box.scrollHeight>box.clientHeight+1) grown.pop().classList.remove('w2');
+}
 function renderAttention(v){
   const box=el('attention'), items=v.conds, crit=items.filter(c=>c.sev==='r').length;
   el('attnsub').textContent=items.length ? items.length+' · '+crit+' critical · worst first' : 'priority queue';
@@ -638,7 +657,7 @@ function renderAttention(v){
     return;
   }
   const cap=Math.max(1, Math.floor((box.clientHeight+1)/30));
-  if(items.length<=cap){ box.innerHTML=items.map(attRow).join(''); return; }
+  if(items.length<=cap){ box.innerHTML=items.map(attRow).join(''); nfmFitAttRows(box); return; }
   /* readability first: keep the summary text large and give it full lines before shrinking it */
   for(let fs=17; fs>=11; fs--){
     for(let full=cap-2; full>=0; full--){
@@ -779,7 +798,7 @@ function upsPanel(m, inv){
          <div class="mono" style="font-size:14px;color:var(--dim)">LOAD <b style="color:var(--ink);font-weight:400">${fmt(x.load,null,' %')}</b></div></div>
        <div style="text-align:right"><div class="bigv" style="font-size:30px;color:${x.below?'var(--red)':'#eafcff'}">${fmt(x.runtime)}<span class="mono" style="font-size:14px;color:var(--dim)"> min</span></div>
          <div class="mono" style="font-size:12px;color:var(--dim)">RUNTIME</div></div></div>
-     <div class="note" style="${stale?'color:var(--yellow)':''}">${stale?E(staleNote(m,'ups')):'existing alert: runtime &lt; 5 min or charge &lt; 50 %'}</div>
+     <div class="note" style="${stale?'color:var(--yellow)':''}">${stale?E(staleNote(m,'ups')):'alert set: runtime &lt; 5 min or charge &lt; 50 %'}</div>
      <div class="inv" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">FEEDS ${E(inv.feeds)}</div>`);
 }
 function renderRail(m, wan){

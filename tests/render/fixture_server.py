@@ -9,6 +9,7 @@ fixture and a proposal envelope shaped like the live feed. Timestamps are rewrit
     then open http://localhost:<port>/            (add ?probe=1 to append tests/render/probe.js)
 
 Scenarios: normal degraded critical overflow crowded startup stale disconnected future recovered
+           packetc packetc-long packetc-unknown (Packet C Wazuh strings; see test_p11_layout_fit.mjs)
 """
 import copy, json, os, sys, time, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -127,6 +128,20 @@ def state(now):
         stale_panel(s, "switch", 1200); stale_panel(s, "slurm", 600)
     elif SCEN == "future":
         s["ts"] = now + 3600
+    elif SCEN in ("packetc", "packetc-long", "packetc-unknown"):
+        # Packet C as deployed 2026-10-07: the Integrity chip carries the full measured reason. These
+        # strings are what widened the stage past 1920 px before test_p11_layout_fit existed.
+        wz_i = next(x for x in s["integrity"] if x["k"] == "Wazuh SIEM")
+        wz_s = next(x for x in s["services"] if x["n"] == "Wazuh SIEM")
+        if SCEN == "packetc":                      # the live estate: services fine, auth blind
+            wz_i.update(v="CRITICAL · AUTH MAJORITY STALE · AUTH 1/9 FRESH · AGENTS 9/9 · DROPS 0", s="r")
+        elif SCEN == "packetc-long":               # worst case: serve.py caps labels at 72 characters
+            wz_i.update(v=("CRITICAL · AUTH MAJORITY STALE · INDEXER FAILED · FILEBEAT NOT SHIPPING"
+                           " · AUTH 0/9 FRESH · AGENTS 3/9 · DROPS 1234567"), s="r")
+            wz_s.update(s="r", d="CRITICAL · INDEXER FAILED · INDEXER START TIMEOUT · FILEBEAT NOT SHIPP")
+        else:                                      # fail-visible: nothing measured
+            wz_i.update(v="UNKNOWN · LEGACY CHECK", s="u")
+            wz_s.update(s="u", d="UNKNOWN · LEGACY CHECK")
     return s
 
 
