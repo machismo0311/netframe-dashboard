@@ -1051,6 +1051,53 @@ def refresher():
         print("[netframe] refreshed in %.1fs | mode=%s | up: %s" % (time.time() - t, s.get("mode"), ",".join(on)), flush=True)
         time.sleep(REFRESH)
 
+# ---------------------------------------------------------------- liveness metrics (/metrics)
+# Prometheus scrapes this instance directly so the wall's OWN liveness is measured, not inferred.
+# /healthz answers "ok" even while the refresher thread is dead and the page shows a frozen snapshot,
+# so it proves only that the HTTP listener is up. These series carry what /healthz cannot:
+#   * netframe_wall_snapshot_timestamp_seconds: STATE["ts"], which the refresher republishes every
+#     cycle (P1). If it stops advancing, the refresher is wedged, whatever /healthz says.
+#   * netframe_wall_mode{mode}: one-hot over the closed vocabulary below. A mode outside it is
+#     exported as mode="UNKNOWN", so an unexpected value can never read as LIVE.
+#   * netframe_wall_api_state_last_request_timestamp_seconds{peer}: when /api/state was last
+#     answered, split loopback / remote. On the Pi the kiosk browser is the ONLY loopback client and
+#     polls every 3 s, so a stale loopback timestamp means the page stopped polling (crashed tab,
+#     dead renderer) even while the chromium process still exists. A peer that has never polled
+#     since start is OMITTED, not exported as 0: absence is UNKNOWN, a fake epoch would be a lie.
+# None of these proves photons reach a viewer. Physical panel visibility is NOT provable from here.
+WALL_MODES = ("LIVE", "DEGRADED", "STALE", "ERROR", "MOCK")
+API_STATE_SEEN = {}          # peer -> last /api/state answer time (epoch s)
+SEEN_LOCK = threading.Lock()
+
+def _peer(addr):
+    """loopback or remote, from the client address the server saw."""
+    a = (addr or "").lower()
+    return "loopback" if (a.startswith("127.") or a == "::1" or a.startswith("::ffff:127.")) else "remote"
+
+def note_api_state_request(addr, now=None):
+    with SEEN_LOCK:
+        API_STATE_SEEN[_peer(addr)] = time.time() if now is None else now
+
+def metrics_text(state, seen):
+    """Prometheus text exposition for the wall's liveness. Pure: no clock, no globals."""
+    out = ["# HELP netframe_wall_snapshot_timestamp_seconds Epoch of the snapshot this wall is serving (republished every cycle).",
+           "# TYPE netframe_wall_snapshot_timestamp_seconds gauge"]
+    ts = state.get("ts")
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool) and ts == ts and ts not in (float("inf"), float("-inf")):
+        out.append("netframe_wall_snapshot_timestamp_seconds %.3f" % ts)
+    mode = state.get("mode")
+    out += ["# HELP netframe_wall_mode Global wall mode, one-hot. UNKNOWN means a value outside the closed vocabulary.",
+            "# TYPE netframe_wall_mode gauge"]
+    for m in WALL_MODES + ("UNKNOWN",):
+        hit = (mode == m) if m != "UNKNOWN" else (mode not in WALL_MODES)
+        out.append('netframe_wall_mode{mode="%s"} %d' % (m, 1 if hit else 0))
+    out += ["# HELP netframe_wall_api_state_last_request_timestamp_seconds Epoch /api/state was last answered, by peer class. Omitted until the first request.",
+            "# TYPE netframe_wall_api_state_last_request_timestamp_seconds gauge"]
+    for peer in ("loopback", "remote"):
+        if peer in seen:
+            out.append('netframe_wall_api_state_last_request_timestamp_seconds{peer="%s"} %.3f' % (peer, seen[peer]))
+    return "\n".join(out) + "\n"
+
 # ---------------------------------------------------------------- http
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype):
@@ -1073,7 +1120,18 @@ class H(BaseHTTPRequestHandler):
         elif path == "/api/state":
             with LOCK:
                 body = json.dumps(STATE).encode()
+            # Recorded BEFORE the reply, so a client that has its answer can never observe /metrics
+            # without its own poll in it.
+            note_api_state_request(self.client_address[0] if self.client_address else "")
             self._send(200, body, "application/json")
+        elif path == "/metrics":
+            # Liveness series for Prometheus (see metrics_text). Read-only, no new data: everything
+            # here is already public in /api/state, except the poll timestamps, which reveal nothing.
+            with LOCK:
+                st = STATE
+            with SEEN_LOCK:
+                seen = dict(API_STATE_SEEN)
+            self._send(200, metrics_text(st, seen).encode(), "text/plain; version=0.0.4; charset=utf-8")
         elif path == "/api/proposals":
             # A THIRD separate endpoint. /api/state and /api/incident already have consumers and
             # contracts; overloading either with proposal awareness would make both depend on
