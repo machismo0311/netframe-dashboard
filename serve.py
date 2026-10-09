@@ -7,7 +7,9 @@ and serves the last-good copy if a source hiccups, so the wall never blanks.
 
 Live sources wired in this phase (Phase-2 step 1 — the backbone):
   * Prometheus  (ssh pve4 -> pct exec 103 -> localhost:9090)
-        node CPU / RAM / disk, per-node up, UPS load+charge+runtime, Pi-hole up/down
+        node CPU / RAM / disk, per-node up, UPS load+charge+runtime, Pi-hole up/down,
+        application probes (svc-* blackbox jobs: OPNsense, Headscale, Home Assistant, Jellyfin)
+        in ONE sentinel-guarded query, see SVC_QUERY / service_health()
   * netframe-monitor last_run.json (ssh jarvis, world-readable, no sudo)
         integrity strip, service/guest liveness, GPU temps/util/VRAM, SMART summary
 
@@ -326,27 +328,33 @@ def services(M):
         return None
     g = all_guests(M)
     def gs(name):            # guest running -> g, present-not-running -> r, absent -> None
+        # Used only where a guest IS the service. Headscale, Home Assistant, OPNsense and Jellyfin
+        # are application rows and come from service_health() below: a running guest is host-level
+        # evidence and never makes an application green.
         return "g" if g.get(name) == "running" else ("r" if name in g else None)
     def probe(node, check):  # monitoring probe verdict -> status
         v = _v(M, node, check)
         return _s(v) if v != "UNKNOWN" else None
     spec = [
         ("Proxmox Backup", "Randy:8007",  probe("randy", "pbs")),
-        ("OPNsense",       "VM100·pve2",  None),
+        ("OPNsense",       "VM100·pve2",  None),            # service_health()
         ("Pi-hole (pri)",  "pve1·.177",   probe("monitoring", "pihole")),
         ("Pi-hole (sec)",  "pve5·.178",   gs("netframe-pihole2")),
         ("Grafana",        "CT103·pve4",  probe("monitoring", "grafana")),
         ("Wazuh SIEM",     "VM104·.184",  None),
-        ("Headscale",      "pve5·.186",   gs("headscale")),
+        ("Headscale",      "pve5·.186",   None),            # service_health()
         ("Vaultwarden",    "CT102·pve3",  gs("vaultwarden")),
         ("Ollama · Qwen72B","Jarvis·GPU", probe("monitoring", "llm_router")),
         ("Open WebUI",     "CT107·.185",  probe("monitoring", "openwebui_reach") or gs("openwebui")),
-        ("Jellyfin",       "Randy:8096",  None),
-        ("Home Assistant", "VM110·pve5",  gs("homeassistant")),
+        ("Jellyfin",       "Randy:8096",  None),            # service_health()
+        ("Home Assistant", "VM110·pve5",  None),            # service_health()
     ]
     # No probe and no guest record is UNKNOWN ("u"), not green. OPNsense and Jellyfin have no probe at
     # all, and used to render healthy by construction.
     out = [{"n": n, "h": h, "s": s or "u"} for (n, h, s) in spec]
+    # The four application rows, from the monitor's view alone (no probe data here): a stopped guest
+    # is red, anything else is UNKNOWN until build_state() applies the Prometheus probes.
+    out = apply_service_health(out, service_health(None, time.time(), guests=g))
     # Wazuh SIEM: the services tree, with its reason ("d") when it is not healthy, so the attention
     # list can say WHAT failed instead of "cause not determined".
     wt, ws = wazuh_status(M, "wazuh")
@@ -356,6 +364,165 @@ def services(M):
             if ws != "g":
                 row["d"] = wt
     return out
+
+# ---------------------------------------------------------------- application service health
+# Blackbox probes run from CT 210 (jobs svc-icmp / svc-tcp / svc-app / svc-health / svc-dns, label
+# `service`). ONE query per refresh carries all of it, because every prom() call is one more SSH
+# session to pve4. The label-less `vector(1)` sample is a SENTINEL: present means the query itself
+# ran; absent (prom() returns [] on any error) means collection failed, so every probe-derived state
+# is UNKNOWN, never NOMINAL and never a fabricated failure.
+SVC_QUERY = '{__name__=~"up|probe_success|probe_ssl_earliest_cert_expiry",job=~"svc-.+"} or vector(1)'
+
+#: service label -> (Services row name, required probe jobs, Proxmox guest name or None).
+#: ICMP is never required: a host answering ping says nothing about the application, and a broken
+#: ICMP prober must neither block nor grant NOMINAL.
+SVC_SPEC = {
+    "opnsense":      ("OPNsense",       ("svc-tcp", "svc-app"),               None),
+    "headscale":     ("Headscale",      ("svc-tcp", "svc-app"),               "headscale"),
+    "homeassistant": ("Home Assistant", ("svc-tcp", "svc-app", "svc-health"), "homeassistant"),
+    "jellyfin":      ("Jellyfin",       ("svc-tcp", "svc-app", "svc-health"), None),
+}
+_SVC_METRICS = ("up", "probe_success", "probe_ssl_earliest_cert_expiry")
+_SVC_WORD = {"svc-tcp": "tcp", "svc-app": "app", "svc-health": "health", "svc-icmp": "icmp"}
+
+
+def _svc_index(series):
+    """(sentinel_present, {(job, service): {target_key: {metric: value}}}) from prom_series rows."""
+    sentinel, idx = False, {}
+    for row in series or []:
+        try:
+            labels, v = row
+            v = float(v)
+        except Exception:
+            continue
+        if not labels:
+            sentinel = True
+            continue
+        name, job, svc = labels.get("__name__"), str(labels.get("job") or ""), labels.get("service")
+        if name not in _SVC_METRICS or not job.startswith("svc-") or not svc or v != v:   # v != v: NaN
+            continue
+        key = tuple(sorted((k, str(x)) for k, x in labels.items() if k != "__name__"))
+        idx.setdefault((job, svc), {}).setdefault(key, {})[name] = v
+    return sentinel, idx
+
+
+def _svc_verdict(targets):
+    """ok / fail (measured, up==1 and probe_success==0) / scrape (up==0 or absent) /
+    nodata (up==1, no probe_success) / missing (no series). Any measured failure wins."""
+    if not targets:
+        return "missing"
+    codes = []
+    for m in targets.values():
+        up, ps = m.get("up"), m.get("probe_success")
+        if up is None or up < 1:
+            codes.append("scrape")
+        elif ps is None:
+            codes.append("nodata")
+        else:
+            codes.append("ok" if ps >= 1 else "fail")
+    if "fail" in codes:
+        return "fail"
+    if all(c == "ok" for c in codes):
+        return "ok"
+    return "scrape" if "scrape" in codes else "nodata"
+
+
+_SVC_UNMEASURED = {"missing": "not measured", "scrape": "scrape failed", "nodata": "no probe result"}
+
+
+def service_health(series, now, guests=None, api_fresh=False):
+    """Pure. {service: {"s": g|y|r|u, "d": reason, "src": panel}} for the SVC_SPEC applications.
+
+    series     prom_series(SVC_QUERY) rows from a FRESH collection; [] = collection failed this cycle
+               (no sentinel); None = no probe data supplied at all (services() before build_state).
+    guests     all_guests() from a FRESH monitor collection, or None when that is not current.
+    api_fresh  OPNsense only: the authenticated API section is FRESH this cycle with gateway data.
+
+    CRITICAL  a fresh measured failure: tcp or app probe_success==0 with up==1, or a stopped guest.
+    DEGRADED  tcp+app OK but health failing, cert expired, a svc-dns resolver failing, or no ICMP
+              reply while the canary answers; also a measured conflict between two sources.
+    NOMINAL   tcp==1 AND app==1 AND (health==1 where required), all up==1, nothing degraded.
+    UNKNOWN   everything else. A running guest alone never yields NOMINAL."""
+    sentinel, idx = _svc_index(series)
+    canary = _svc_verdict(idx.get(("svc-icmp", "canary"), {}))
+    out = {}
+    for svc, (_, need, guest) in SVC_SPEC.items():
+        v = {j: _svc_verdict(idx.get((j, svc), {})) for j in ("svc-tcp", "svc-app", "svc-health", "svc-icmp")}
+        degraded = []
+        if series is None:
+            s, d = "u", "no probe data"
+        elif not sentinel:
+            s, d = "u", "probe collection failed"
+        else:
+            # degradation evidence, each measured on its own (up==1)
+            if v["svc-health"] == "fail":
+                degraded.append("health check failing")
+            certs = [m["probe_ssl_earliest_cert_expiry"] for m in idx.get(("svc-app", svc), {}).values()
+                     if "probe_ssl_earliest_cert_expiry" in m and (m.get("up") or 0) >= 1]
+            if certs and min(certs) < now:
+                degraded.append("TLS certificate expired")
+            dns_bad = sorted(dict(k).get("resolver", "?") for k, m in idx.get(("svc-dns", svc), {}).items()
+                             if (m.get("up") or 0) >= 1 and m.get("probe_success") is not None
+                             and m["probe_success"] < 1)
+            if dns_bad:
+                degraded.append("DNS via %s failing" % ", ".join(dns_bad))
+            down = [_SVC_WORD[j] for j in ("svc-tcp", "svc-app") if v[j] == "fail"]
+            unmeasured = ["%s %s" % (_SVC_WORD[j], _SVC_UNMEASURED[v[j]]) for j in need if v[j] not in ("ok", "fail")]
+            if down:
+                s = "r"
+                d = "%s probe failing" % " and ".join(down)
+                if v["svc-icmp"] == "ok":
+                    d += " (host answers ICMP)"
+            else:
+                if v["svc-icmp"] == "fail" and canary == "ok" and not unmeasured:
+                    degraded.append("no ICMP reply")
+                if degraded:
+                    s, d = "y", "; ".join(degraded + unmeasured)
+                elif unmeasured:
+                    lead = "app up, " if v["svc-app"] == "ok" else ""
+                    s, d = "u", lead + "; ".join(unmeasured)
+                else:
+                    s, d = "g", "+".join(_SVC_WORD[j] for j in need) + " ok"
+        src = "svc_probes"
+        # A stopped guest is a measured failure; probes passing at the same time is a conflict.
+        gst = (guests or {}).get(guest) if guest else None
+        if guest and guests is not None and guest in guests and gst != "running":
+            if s in ("g", "y") and v["svc-app"] == "ok":
+                s, d = "y", "conflict: guest %s but app probe passes" % gst
+            else:
+                s, d, src = "r", "guest %s" % gst + ("; " + d if s == "r" else ""), "monitor"
+        # OPNsense: the authenticated API answering is an application signal of its own.
+        if svc == "opnsense" and api_fresh:
+            if s == "r":
+                s, d = "y", "conflict: %s, but the authenticated API answers" % d
+            elif s == "u":
+                s, d, src = "g", "authenticated API answering (probes: %s)" % d, "opnsense"
+            else:
+                d += "; authenticated API answering"
+        out[svc] = {"s": s, "d": d, "src": src}
+    return out
+
+
+def apply_service_health(rows, health):
+    """Copy of the Services rows with the SVC_SPEC application rows replaced from service_health()."""
+    by_name = {SVC_SPEC[k][0]: v for k, v in health.items()}
+    out = []
+    for row in rows or []:
+        row = dict(row)
+        h = by_name.get(row.get("n"))
+        if h:
+            row["s"], row["d"], row["src"] = h["s"], h["d"], h["src"]
+        out.append(row)
+    return out
+
+
+def opnsense_api_answering(st):
+    """True when the OPNsense API section is FRESH this cycle AND returned gateway data. The same
+    truth the wall's isStale() reads: st['panels'][name]['state']."""
+    if (st.get("panels", {}).get("opnsense") or {}).get("state") != "FRESH":
+        return False
+    o = st.get("opnsense") or {}
+    return any(isinstance(w, dict) and w.get("gw") for w in o.values())
 
 def slurm():
     """running/pending jobs + partitions from QuarkyLab via the nfm-slurm wrapper."""
@@ -750,7 +917,7 @@ def build_state(prev=None):
         except Exception: pass
 
     # fire every independent source concurrently — turns ~15s of serial SSH into ~5s
-    # 13 of these, plus switch()'s serial chain, are nfm-prom calls to pve4: sh() admits at most
+    # 14 of these, plus switch()'s serial chain, are nfm-prom calls to pve4: sh() admits at most
     # SSH_CHANNEL_CAP of them onto pve4's connection at once and queues the rest.
     tasks = {
         "cpu":  lambda: prom_by('100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[2m]))*100)'),
@@ -772,6 +939,7 @@ def build_state(prev=None):
         "phs":  pihole_stats,
         "opn":  opnsense_stats,
         "sw":   switch,
+        "svc":  lambda: prom_series(SVC_QUERY),   # ONE query for every application probe (sentinel-guarded)
     }
     R = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as ex:
@@ -890,6 +1058,29 @@ def build_state(prev=None):
         st.update({"opnsense": o})
     section("opnsense",   ["opnsense"],     _opn,    lambda: bool(st.get("opnsense")))
     section("switch",     ["network"],      lambda: st.update({"network": R["sw"]}) if R.get("sw") else None,       lambda: bool(st.get("network")))
+
+    # ---- application probes (Prometheus blackbox, one sentinel-guarded query) ----
+    # FRESH only when the sentinel came back, i.e. the query itself ran. Before any svc-* target is
+    # deployed the query still returns the sentinel, so the section is FRESH and the rows read UNKNOWN.
+    def _svc():
+        sv = R.get("svc") or []
+        if any(not lab for lab, _ in sv):
+            st["svc_probes"] = {"series": [[lab, v] for lab, v in sv if lab]}
+    section("svc_probes", ["svc_probes"], _svc, lambda: bool(st.get("svc_probes")))
+    # Rows use probe data only from THIS cycle (a carried copy is history, not a measurement), guest
+    # state only from a FRESH monitor collection, and the OPNsense API only when FRESH with gateways.
+    try:
+        if st.get("services"):
+            fresh = lambda n: (st["panels"].get(n) or {}).get("state") == "FRESH"
+            _MM = R.get("M") or {}
+            st["services"] = apply_service_health(st["services"], service_health(
+                (R.get("svc") or []) if fresh("svc_probes") else [], now,
+                guests=all_guests(_MM) if (fresh("monitor") and _MM.get("nodes")) else None,
+                api_fresh=opnsense_api_answering(st)))
+    except Exception as e:
+        print("[netframe] SERVICE HEALTH ERROR: %s" % e, flush=True)
+        st["services"] = [dict(r, s="u", d="service health evaluation error") if r.get("n") in
+                          {v[0] for v in SVC_SPEC.values()} else r for r in st["services"]]
 
     # ---- derived global state (INV-001/002: never hardcode LIVE; mode reflects real freshness) ----
     states = [p["state"] for p in st["panels"].values()]
