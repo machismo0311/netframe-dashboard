@@ -163,6 +163,16 @@ calls per host and queues the rest; the queue wait counts against the call's own
 so a hung host costs no more time than before, and other hosts never wait on it
 (`tests/test_p12_ssh_fanout.py`).
 
+**Per-refresh SSH load on pve4 (combined build, 2026-10-09).** Every `prom()` call is one SSH
+session to pve4 (`nfm-prom`), so the load each wall instance puts on pve4 per refresh (every
+`REFRESH` = 30 s) is counted exactly, not estimated: 1 warm-up (`true`) + 19 `nfm-prom` (8
+`prom_by` + 5 GPU `prom_series` + 1 application-probe `SVC_QUERY` + switch()'s chain of up to 5) =
+**20 sessions**. Before the application-probe rows it was 19 (18 `nfm-prom`). `/metrics` adds none:
+it renders the already-served snapshot. jarvis and quarkylab get 2 each (warm-up + one read). With
+two wall instances (Ares and the Pi) pve4 sees twice that. Section 6 of `tests/test_p12_ssh_fanout.py`
+asserts every one of these numbers, so a change to the fan-out fails the suite until this paragraph
+is updated with it.
+
 ### 6.2 Credentials
 
 Secrets live in a `600`-mode env file, **never** in the repo:
@@ -437,6 +447,9 @@ kiosk browser is the only loopback client and polls every 3 s, so a stale loopba
 stopped polling). A missing ts and a peer that never polled are omitted, never exported as 0. The alert
 rules that read these live in netframe-current `observability/wall-liveness/`. None of this proves
 the panel is physically visible; nothing software-side can. `tests/test_p13_liveness_metrics.py`.
+`/metrics` opens no SSH session and runs no query: it only renders the served snapshot. The
+`svc_probes` section (7.6a2) is a panel like any other, so a lost probe sentinel makes the mode
+DEGRADED and `/metrics` says so, never LIVE (`tests/test_p12_ssh_fanout.py` section 6).
 
 ### 7.7 Tests and the render harness
 No test touches the estate. The pure blocks (`NFM-*-BEGIN/END`) are extracted from the shipped

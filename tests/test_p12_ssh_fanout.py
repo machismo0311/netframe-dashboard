@@ -36,6 +36,7 @@ class FakeSSH:
         self.latency, self.hang = latency, set(hang)
         self.lock = threading.Lock()
         self.inflight, self.peak, self.calls = {}, {}, {}
+        self.cmds = []                       # (host, remote argv, stdin) of every SSH invocation
         self.sessions, self.refused, self.direct = {}, {}, {}
 
     def __call__(self, cmd, timeout, input):
@@ -46,6 +47,7 @@ class FakeSSH:
             self.inflight[host] = self.inflight.get(host, 0) + 1
             self.peak[host] = max(self.peak.get(host, 0), self.inflight[host])
             self.calls[host] = self.calls.get(host, 0) + 1
+            self.cmds.append((host, tuple(cmd[len(S.SSH) + 1:]), input))
             mux = self.sessions.get(host, 0) < MAX_SESSIONS
             if mux:
                 self.sessions[host] = self.sessions.get(host, 0) + 1
@@ -171,6 +173,50 @@ chk("5: a hung host yields the same empty result as before (no exception, no fab
     all(r == "" for _, r in times))
 chk("5: the hung host's waiting calls never exceed the cap either", hung.peak["pve4"] <= 6)
 chk("5: slots are all released after the hang", all(S._ssh_slot("pve4").acquire(blocking=False) for _ in range(6)))
+
+# ---- 6. combined accounting: every SSH session one refresh opens, per host and per command -------
+# Integration of the wall-liveness /metrics endpoint with the application-probe rows. Each prom() is
+# one SSH session to pve4 (nfm-prom), so this is the honest per-refresh load the combined build puts
+# on pve4: it must change only by a reviewed edit to this number and the README section 6.1.
+acct = FakeSSH({"pve4": 0.01, "jarvis": 0.01, "quarkylab": 0.01})
+st6, _ = run(acct, cap=SHIPPED_CAP)
+by = {}
+for host, remote, _q in acct.cmds:
+    by[(host, remote)] = by.get((host, remote), 0) + 1
+prom_q = [q for host, remote, q in acct.cmds if host == "pve4" and remote == ("nfm-prom",)]
+chk("6: pve4 gets exactly 1 warm-up session per refresh", by.get(("pve4", ("true",))) == 1)
+chk("6: pve4 gets exactly 19 nfm-prom sessions per refresh (8 prom_by + 5 GPU + 1 SVC_QUERY + 5 switch; got %d)"
+    % len(prom_q), len(prom_q) == 19)
+chk("6: pve4 total SSH sessions per refresh = 20 (got %d)" % acct.calls.get("pve4", 0), acct.calls.get("pve4", 0) == 20)
+chk("6: exactly ONE of them is the application-probe query", prom_q.count(S.SVC_QUERY) == 1)
+chk("6: no other pve4 command is run", set(r for h, r, _ in acct.cmds if h == "pve4") == {("true",), ("nfm-prom",)})
+chk("6: jarvis gets 2 sessions (warm-up + last_run.json; got %d)" % acct.calls.get("jarvis", 0),
+    acct.calls.get("jarvis", 0) == 2)
+chk("6: quarkylab gets 2 sessions (warm-up + nfm-slurm; got %d)" % acct.calls.get("quarkylab", 0),
+    acct.calls.get("quarkylab", 0) == 2)
+chk("6: no host outside pve4/jarvis/quarkylab is contacted", set(acct.calls) == {"pve4", "jarvis", "quarkylab"})
+n0 = len(acct.cmds)
+S.API_STATE_SEEN.clear()
+body = S.metrics_text(st6, dict(S.API_STATE_SEEN))
+chk("6: rendering /metrics opens no SSH session (it reads the served snapshot only)", len(acct.cmds) == n0)
+chk("6: /metrics reports the combined snapshot's mode one-hot (LIVE with svc_probes FRESH)",
+    st6["panels"]["svc_probes"]["state"] == "FRESH" and 'netframe_wall_mode{mode="LIVE"} 1' in body
+    and 'netframe_wall_mode{mode="UNKNOWN"} 0' in body)
+# A probe query that loses its sentinel makes svc_probes non-FRESH; /metrics must then say DEGRADED,
+# never LIVE, because the wall is showing those rows as UNKNOWN.
+_reply = reply
+def reply(remote, query):                       # noqa: F811  (sentinel withheld this refresh)
+    out = _reply(remote, query)
+    if query and "svc-" in query:
+        return json.dumps({"data": {"result": []}})
+    return out
+lost = FakeSSH({"pve4": 0.01, "jarvis": 0.01, "quarkylab": 0.01})
+st7, _ = run(lost, cap=SHIPPED_CAP)
+body7 = S.metrics_text(st7, {})
+chk("6: sentinel lost -> svc_probes not FRESH", st7["panels"]["svc_probes"]["state"] != "FRESH")
+chk("6: ... and /metrics exports mode DEGRADED, not LIVE",
+    'netframe_wall_mode{mode="DEGRADED"} 1' in body7 and 'netframe_wall_mode{mode="LIVE"} 0' in body7)
+chk("6: ... with the same 20 pve4 sessions (a failed probe query is not retried)", lost.calls.get("pve4", 0) == 20)
 
 print("\n%d FAILED" % len(fails) if fails else "\nALL PASS")
 sys.exit(1 if fails else 0)
