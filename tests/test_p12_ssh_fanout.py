@@ -8,6 +8,10 @@ sshd allows MaxSessions=10 per connection, so 4 sessions per refresh were refuse
 sessions" on pve4) and each refused ssh silently fell back to a fresh root login (4 extra TCP
 connections to pve4:22 seen per refresh on Ares and on the Pi).
 
+Since 2026-10-09 build_state runs ONE more nfm-prom call (the sentinel-guarded application-probe query,
+serve.SVC_QUERY), so the uncapped reproduction below now peaks at 15 channels and 5 refusals; the
+measured 14/4 above is the history it was built from.
+
 The fake transport below replaces only serve._run, the one place a process is spawned. It models a
 multiplexed connection per host that refuses a channel beyond MAX_SESSIONS, with a fixed latency per
 call, and records the peak number of channels each host saw."""
@@ -65,7 +69,10 @@ def reply(remote, query):
     """Plausible output for each remote command serve.py runs."""
     if remote == ["nfm-prom"]:
         lab = {"instance": "pve4", "ups": "tripplite", "pihole": "primary"}
-        return json.dumps({"data": {"result": [{"metric": lab, "value": [0, "1"]}]}})
+        res = [{"metric": lab, "value": [0, "1"]}]
+        if query and "svc-" in query:          # the application-probe query answers with its sentinel
+            res.append({"metric": {}, "value": [0, "1"]})
+        return json.dumps({"data": {"result": res}})
     if remote and remote[0].startswith("cat /opt/netframe-monitor"):
         return json.dumps({"finished": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
                            "nodes": {"jarvis": {"journal_errors": {"verdict": "OK", "metrics": {}}}}})
@@ -87,18 +94,18 @@ def run(fake, cap):
 
 
 L = 0.2      # latency of one nfm-prom call (scaled down; the live walls see ~0.3-1.5 s per call)
-PVE4_PANELS = ("prometheus", "ups", "pihole", "gpu", "switch")
+PVE4_PANELS = ("prometheus", "ups", "pihole", "gpu", "switch", "svc_probes")
 
 # ---- 1. the defect, reproduced on the old behaviour (no effective cap) -------------------------
 old = FakeSSH({"pve4": L, "jarvis": L, "quarkylab": L})
 st_old, took_old = run(old, cap=10_000)
-chk("1: uncapped, 14 ssh calls to pve4 are in flight at once (measured with ps on both walls; got %d)"
-    % old.peak["pve4"], old.peak["pve4"] == 14)
+chk("1: uncapped, 15 ssh calls to pve4 are in flight at once (14 measured with ps on both walls, plus the "
+    "service-probe query; got %d)" % old.peak["pve4"], old.peak["pve4"] == 15)
 chk("1: uncapped, that exceeds MaxSessions=10", old.peak["pve4"] > MAX_SESSIONS)
-chk("1: uncapped, 4 sessions per refresh are refused, each a 'no more sessions' on pve4 (got %d)"
-    % old.refused.get("pve4", 0), old.refused.get("pve4", 0) == 4)
-chk("1: uncapped, each refusal becomes an extra direct root login (4 per refresh, as ss showed)",
-    old.direct.get("pve4", 0) == 4)
+chk("1: uncapped, 5 sessions per refresh are refused, each a 'no more sessions' on pve4 (got %d)"
+    % old.refused.get("pve4", 0), old.refused.get("pve4", 0) == 5)
+chk("1: uncapped, each refusal becomes an extra direct root login (4 per refresh as ss showed, 5 now)",
+    old.direct.get("pve4", 0) == 5)
 chk("1: uncapped, the fallback hides it: the wall still looks LIVE", st_old["mode"] == "LIVE")
 
 # ---- 2. capped: channels per host never exceed the cap -----------------------------------------
@@ -109,7 +116,7 @@ chk("2: pve4 never sees more than the cap (peak %d)" % new.peak["pve4"], new.pea
 chk("2: the cap is actually reached, so the pool is not serialised", new.peak["pve4"] == SHIPPED_CAP)
 chk("2: no session is refused, so pve4 logs no 'no more sessions'", sum(new.refused.values()) == 0)
 chk("2: no direct fallback login is made", sum(new.direct.values()) == 0)
-chk("2: every pve4 query still runs (1 warm-up + 13 parallel + 5 switch = 19)", new.calls["pve4"] == 19)
+chk("2: every pve4 query still runs (1 warm-up + 14 parallel + 5 switch = 20)", new.calls["pve4"] == 20)
 for h in ("jarvis", "quarkylab"):
     chk("2: %s stays within the cap" % h, new.peak[h] <= SHIPPED_CAP)
 
@@ -119,7 +126,7 @@ for p in PVE4_PANELS + ("monitor", "slurm"):
 chk("3: the snapshot is LIVE", st["mode"] == "LIVE")
 chk("3: pve4 values are all present (cpu, ram, disk, up on the pve4 card)",
     set(st["nodes"].get("pve4", {})) >= {"cpu", "ramU", "disk", "st"})
-# The uncapped baseline is the warm-ups (3 L) plus switch()'s chain of 5 (5 L) = 8 L. Capped, the 13
+# The uncapped baseline is the warm-ups (3 L) plus switch()'s chain of 5 (5 L) = 8 L. Capped, the 14
 # parallel calls take 3 waves and the chain's later calls queue behind them: about 2 L more.
 chk("3: uncapped baseline refresh %.2fs (about 8 latencies)" % took_old, took_old < 9 * L)
 chk("3: refresh with the cap takes %.2fs, under 11 latencies (%.2fs)" % (took, 11 * L), took < 11 * L)

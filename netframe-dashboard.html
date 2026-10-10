@@ -409,8 +409,9 @@ function nfmConditions(m, wan, nowSec){
   NFM_INV.nodes.forEach(n=>{ if(m.nodes[n.host].st==='r')
     add('r','NODE',n.host,n.host+' not responding (node-exporter up = 0) · cause not determined','prometheus'); });
   (m.services||[]).forEach(v=>{
-    if(v.s==='r') add('r','SERVICE',v.n,v.n+(v.d?' '+v.d+' · INVENTORY '+v.h:' check failing · INVENTORY '+v.h+' · cause not determined'),'monitor');
-    else if(v.s==='y') add('y','SERVICE',v.n,v.n+(v.d?' '+v.d:' check degraded')+' · INVENTORY '+v.h,'monitor'); });
+    const src=v.src||'monitor';   // application rows carry their own source (svc_probes / opnsense)
+    if(v.s==='r') add('r','SERVICE',v.n,v.n+(v.d?' '+v.d+' · INVENTORY '+v.h:' check failing · INVENTORY '+v.h+' · cause not determined'),src);
+    else if(v.s==='y') add('y','SERVICE',v.n,v.n+(v.d?' '+v.d:' check degraded')+' · INVENTORY '+v.h,src); });
   (m.integrity||[]).forEach(c=>{ if(!nfmObj(c)) return;
     if(c.s==='r') add('r','INTEGRITY',String(c.k),String(c.k)+': '+String(c.v),'monitor');
     else if(c.s==='y') add('y','INTEGRITY',String(c.k),String(c.k)+': '+String(c.v),'monitor'); });
@@ -816,9 +817,11 @@ function renderRail(m, wan){
     `${wanRow('wan1')}${wanRow('wan2')}
      <div class="mono" style="font-size:16px;color:${wan.color};letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${E(wan.label)}</div>
      <div class="note" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${E(wan.sub)}${isStale(m,'opnsense')?' · '+E(staleNote(m,'opnsense')):''}</div>`);
+  // Header is tight on purpose: four counts must fit the rail at 1920 px. "?" is the same NOT MEASURED
+  // marker the rows carry; the footer still names every NOT MEASURED row in words.
   const S=m.services, cnt=k=>S?S.filter(v=>v.s===k).length:0;
-  const svc=panel('Services', S?`${cnt('g')} OK · ${cnt('r')} DOWN · ${cnt('u')} NOT MEASURED`:'NOT REPORTED',
-    S?`<div class="svc">${S.map(v=>`<div class="row"><span class="dot ${v.s}"></span><span style="color:${v.s==='r'?'var(--red)':(v.s==='u'?'var(--dim)':'var(--ink)')}">${E(v.n)}${v.s==='u'?' ?':''}</span></div>`).join('')}</div>`
+  const svc=panel('Services', S?`${cnt('g')} OK·${cnt('y')} DEGRADED·${cnt('r')} DOWN·${cnt('u')} ?`:'NOT REPORTED',
+    S?`<div class="svc">${S.map(v=>`<div class="row"><span class="dot ${v.s}"></span><span style="color:${v.s==='r'?'var(--red)':(v.s==='y'?'var(--yellow)':(v.s==='u'?'var(--dim)':'var(--ink)'))}">${E(v.n)}${v.s==='u'?' ?':''}</span></div>`).join('')}</div>`
      :'<div class="offline"><div class="big2">NOT REPORTED</div><div>service checks missing</div></div>');
   const p=m.piholeStats, ph=m.pihole;
   const pst=k=>(!ph || (ph[k]!==0 && ph[k]!==1)) ? '<span class="c-unk">?</span>' : (ph[k] ? '<span class="c-green">✔</span>' : '<span class="c-red">✖</span>');
