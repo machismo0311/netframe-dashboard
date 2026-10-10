@@ -156,12 +156,22 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
 dozen+ SSH calls at once; without multiplexing they can exceed a host's `MaxStartups`
 and silently drop (you'll see values randomly go to zero). One socket per host fixes it.
 But one connection carries at most `MaxSessions` channels (10 by default), and the
-refresh starts 14 Prometheus queries to the same host at once: the extra sessions were
+refresh starts 15 Prometheus queries to the same host at once: the extra sessions were
 refused (`error: no more sessions` in that host's sshd log) and ssh quietly fell back to a
 fresh login for each. `sh()` therefore admits at most `SSH_CHANNEL_CAP` (6) concurrent SSH
 calls per host and queues the rest; the queue wait counts against the call's own timeout,
 so a hung host costs no more time than before, and other hosts never wait on it
 (`tests/test_p12_ssh_fanout.py`).
+
+**Per-refresh SSH load on pve4 (combined build, 2026-10-09).** Every `prom()` call is one SSH
+session to pve4 (`nfm-prom`), so the load each wall instance puts on pve4 per refresh (every
+`REFRESH` = 30 s) is counted exactly, not estimated: 1 warm-up (`true`) + 19 `nfm-prom` (8
+`prom_by` + 5 GPU `prom_series` + 1 application-probe `SVC_QUERY` + switch()'s chain of up to 5) =
+**20 sessions**. Before the application-probe rows it was 19 (18 `nfm-prom`). `/metrics` adds none:
+it renders the already-served snapshot. jarvis and quarkylab get 2 each (warm-up + one read). With
+two wall instances (Ares and the Pi) pve4 sees twice that. Section 6 of `tests/test_p12_ssh_fanout.py`
+asserts every one of these numbers, so a change to the fan-out fails the suite until this paragraph
+is updated with it.
 
 ### 6.2 Credentials
 
@@ -405,6 +415,20 @@ by digest in `tests/test_p10_wazuh_truth.py`. Deploy this wall on every instance
 change: it reads today's daemon-only check as UNKNOWN, while an older wall paired with the new
 collector would still paint the Integrity chip green from the Services verdict alone.
 
+### 7.6a2 Application service rows (2026-10-09)
+OPNsense, Headscale, Home Assistant and Jellyfin are judged as APPLICATIONS, never by their host: a
+running Proxmox guest alone can no longer turn a row green. `service_health()` (pure, pinned by
+`tests/test_p13_service_health.py`) reads the blackbox jobs `svc-tcp`, `svc-app`, `svc-health`,
+`svc-dns` and `svc-icmp` from ONE query per refresh, `serve.SVC_QUERY`, whose label-less `vector(1)`
+sample is a sentinel: without it the collection failed and every probe-derived row is UNKNOWN. It is
+its own section, `svc_probes`, and only this cycle's probes count. CRITICAL needs a fresh measured
+tcp or app failure (`up==1`, `probe_success==0`) or a stopped guest; a failing health check, an expired
+certificate, a failing resolver or a lost ICMP reply (with the canary answering) is DEGRADED; NOMINAL
+needs tcp, app and (Home Assistant, Jellyfin) health all measured OK; everything else is UNKNOWN with
+its reason. OPNsense also counts the authenticated API (`opnsense` section FRESH with gateway data) as
+an application signal: it can make an unmeasured row NOMINAL and turns a probe-only failure into a
+DEGRADED conflict, never CRITICAL. The Services header counts `OK·DEGRADED·DOWN·?`.
+
 ### 7.6b Physical fit (2026-10-07)
 The stage is a fixed 1920x1080 canvas, but content inside it can still be wider than the canvas: the stage
 grid's single column is pinned to `minmax(0,1fr)` so no row's text can widen it, integrity chip values
@@ -412,6 +436,20 @@ end in an ellipsis inside their chip, and an attention row whose text does not f
 line while the panel has room. `tests/test_p11_layout_fit.mjs` renders the real page with the wall Pi's
 own fonts (`tests/render/pi-fonts.conf`) at 1920x1080, 1366x768 and 1280x720 and fails on any overflow,
 clipped panel or off-screen Wazuh row.
+
+### 7.6c Liveness metrics (`/metrics`, source only)
+`/healthz` is a static `ok`: it stays green while the refresher thread is wedged and the page shows a
+frozen snapshot. `/metrics` exports what Prometheus needs to tell a live wall from a frozen one:
+`netframe_wall_snapshot_timestamp_seconds` (the served `ts`, republished every cycle),
+`netframe_wall_mode{mode}` (one-hot over LIVE/DEGRADED/STALE/ERROR/MOCK, anything else as `UNKNOWN`)
+and `netframe_wall_api_state_last_request_timestamp_seconds{peer="loopback|remote"}` (on the Pi the
+kiosk browser is the only loopback client and polls every 3 s, so a stale loopback time means the page
+stopped polling). A missing ts and a peer that never polled are omitted, never exported as 0. The alert
+rules that read these live in netframe-current `observability/wall-liveness/`. None of this proves
+the panel is physically visible; nothing software-side can. `tests/test_p13_liveness_metrics.py`.
+`/metrics` opens no SSH session and runs no query: it only renders the served snapshot. The
+`svc_probes` section (7.6a2) is a panel like any other, so a lost probe sentinel makes the mode
+DEGRADED and `/metrics` says so, never LIVE (`tests/test_p12_ssh_fanout.py` section 6).
 
 ### 7.7 Tests and the render harness
 No test touches the estate. The pure blocks (`NFM-*-BEGIN/END`) are extracted from the shipped
