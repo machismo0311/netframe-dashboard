@@ -413,6 +413,17 @@ line while the panel has room. `tests/test_p11_layout_fit.mjs` renders the real 
 own fonts (`tests/render/pi-fonts.conf`) at 1920x1080, 1366x768 and 1280x720 and fails on any overflow,
 clipped panel or off-screen Wazuh row.
 
+### 7.6c Liveness metrics (`/metrics`, source only)
+`/healthz` is a static `ok`: it stays green while the refresher thread is wedged and the page shows a
+frozen snapshot. `/metrics` exports what Prometheus needs to tell a live wall from a frozen one:
+`netframe_wall_snapshot_timestamp_seconds` (the served `ts`, republished every cycle),
+`netframe_wall_mode{mode}` (one-hot over LIVE/DEGRADED/STALE/ERROR/MOCK, anything else as `UNKNOWN`)
+and `netframe_wall_api_state_last_request_timestamp_seconds{peer="loopback|remote"}` (on the Pi the
+kiosk browser is the only loopback client and polls every 3 s, so a stale loopback time means the page
+stopped polling). A missing ts and a peer that never polled are omitted, never exported as 0. The alert
+rules that read these live in netframe-current `observability/wall-liveness/`. None of this proves
+the panel is physically visible; nothing software-side can. `tests/test_p13_liveness_metrics.py`.
+
 ### 7.7 Tests and the render harness
 No test touches the estate. The pure blocks (`NFM-*-BEGIN/END`) are extracted from the shipped
 HTML and exercised offline; `serve.py` is exercised with its fetch layer monkeypatched.
